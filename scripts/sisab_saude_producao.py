@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import hashlib
+import json
 import logging
 import os
 import random
@@ -14,7 +16,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Iterator
 from urllib.parse import urljoin
 from xml.etree import ElementTree
 
@@ -37,6 +39,14 @@ EXPECTED_TIPO_PRODUCAO = {
     "Visita Domiciliar",
 }
 LOGGER = logging.getLogger("sisab_saude_producao")
+TIDY_FIELDNAMES = [
+    "competencia",
+    "uf",
+    "ibge",
+    "municipio",
+    "tipo_producao",
+    "valor",
+]
 
 
 @dataclass(frozen=True)
@@ -57,7 +67,19 @@ class SisabError(RuntimeError):
     pass
 
 
+class JsonLogFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "time": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
+            "level": record.levelname,
+            "message": record.getMessage(),
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
+
 class SisabClient:
+    """Small JSF client for the SISAB report form."""
+
     def __init__(
         self,
         delay: float,
@@ -82,6 +104,7 @@ class SisabClient:
     def _retry_sleep(self, attempt: int) -> None:
         if self.retry_backoff <= 0:
             return
+        # Jitter keeps repeated retries from landing on the same server rhythm.
         backoff = min(self.retry_backoff_max, self.retry_backoff * (2 ** (attempt - 1)))
         time.sleep(backoff + random.uniform(0, min(1.0, backoff * 0.1)))
 
@@ -106,6 +129,8 @@ class SisabClient:
     def open_report(self) -> JsForm:
         response = self._request("GET", REPORT_URL)
         soup = BeautifulSoup(response.text, "html.parser")
+        # The public report is a JavaServer Faces form; ViewState and dynamic
+        # field names must come from the page on each session.
         form = soup.find("form", id="j_idt44")
         if form is None:
             raise SisabError("Could not find SISAB report form j_idt44.")
@@ -132,6 +157,7 @@ class SisabClient:
 
     def select_municipio_geo(self) -> tuple[str, list[State]]:
         form = self._require_form()
+        # Mimic the UI AJAX event that reveals the Estado and Municipios fields.
         response = self._partial_post(
             source="unidGeo",
             execute="unidGeo",
@@ -154,6 +180,7 @@ class SisabClient:
 
     def select_state(self, state: State) -> tuple[str, list[str]]:
         form = self._require_form()
+        # Selecting a UF via AJAX populates the municipality multi-select.
         response = self._partial_post(
             source="estadoMunicipio",
             execute="estadoMunicipio",
@@ -182,6 +209,7 @@ class SisabClient:
 
     def download_csv(self, competencia: str, state: State, municipios: list[str]) -> str:
         form = self._require_form()
+        # The CSV download is a normal JSF form post with the hidden CSV button id.
         payload = (
             self._base_payload(form.view_state)
             + [
@@ -258,6 +286,7 @@ class SisabClient:
         view_state = updates.get("javax.faces.ViewState")
         if not view_state:
             raise SisabError("SISAB partial response did not include a new ViewState.")
+        # JSF invalidates old ViewState values after partial updates.
         self.form = JsForm(
             action=form.action,
             view_state=view_state,
@@ -290,6 +319,7 @@ class SisabClient:
 
 def parse_sisab_csv(text: str, competencia: str, requested_uf: str) -> list[dict[str, object]]:
     lines = [line for line in text.splitlines() if line.strip()]
+    # SISAB prepends metadata before the semicolon-delimited table.
     header_index = next(
         (
             index
@@ -313,6 +343,7 @@ def parse_sisab_csv(text: str, competencia: str, requested_uf: str) -> list[dict
             raise SisabError(f"Expected UF {requested_uf}, got {uf} in CSV row for {municipio}.")
 
         for column, value in row.items():
+            # A trailing semicolon creates an empty DictReader column; ignore it.
             if column in {"Uf", "Ibge", "Municipio"} or column is None or not column.strip():
                 continue
             tidy.append(
@@ -334,6 +365,7 @@ def validate_rows(
     state: State,
     competencia: str,
 ) -> None:
+    # Fail before final output if SISAB silently drops or adds municipalities.
     if not rows:
         raise SisabError(f"SISAB returned no data rows for {state.uf} {competencia}.")
 
@@ -387,18 +419,11 @@ def parse_br_integer(value: str | None) -> int:
 
 
 def write_tidy_csv(path: Path, rows: Iterable[dict[str, object]]) -> None:
-    fieldnames = [
-        "competencia",
-        "uf",
-        "ibge",
-        "municipio",
-        "tipo_producao",
-        "valor",
-    ]
+    # Atomic replace prevents a partial final CSV if the process dies mid-write.
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_name(f".{path.name}.tmp")
     with temp_path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer = csv.DictWriter(handle, fieldnames=TIDY_FIELDNAMES)
         writer.writeheader()
         writer.writerows(rows)
     os.replace(temp_path, path)
@@ -418,13 +443,49 @@ def chunks(values: list[str], size: int) -> Iterable[list[str]]:
         yield values[start : start + size]
 
 
+def sort_tidy_rows(rows: Iterable[dict[str, object]]) -> list[dict[str, object]]:
+    return sorted(
+        rows,
+        key=lambda row: (
+            str(row["competencia"]),
+            str(row["uf"]),
+            str(row["ibge"]),
+            str(row["tipo_producao"]),
+        ),
+    )
+
+
 def chunk_cache_path(cache_dir: Path, competencia: str, state: State, municipios: list[str]) -> Path:
     joined = ",".join(municipios)
+    # Include a hash so adaptive chunks with similar boundaries cannot collide.
     digest = hashlib.sha1(joined.encode("ascii")).hexdigest()[:12]
     first = municipios[0]
     last = municipios[-1]
     name = f"{state.uf}_{first}_{last}_{len(municipios)}_{digest}.csv"
     return cache_dir / competencia / state.uf / name
+
+
+@contextlib.contextmanager
+def cache_lock(path: Path, timeout: float, poll_interval: float = 1.0) -> Iterator[None]:
+    lock_path = path.with_name(f".{path.name}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic()
+    fd: int | None = None
+    while fd is None:
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode("ascii"))
+        except FileExistsError:
+            if time.monotonic() - started > timeout:
+                raise SisabError(f"Timed out waiting for cache lock {lock_path}.")
+            time.sleep(poll_interval)
+    try:
+        yield
+    finally:
+        if fd is not None:
+            os.close(fd)
+        with contextlib.suppress(FileNotFoundError):
+            lock_path.unlink()
 
 
 def prepare_state_client(args: argparse.Namespace, state: State) -> SisabClient:
@@ -441,39 +502,29 @@ def prepare_state_client(args: argparse.Namespace, state: State) -> SisabClient:
     return client
 
 
-def load_state_municipios(args: argparse.Namespace, state: State) -> list[str]:
-    client = SisabClient(
-        delay=args.delay,
-        timeout=args.timeout,
-        retries=args.retries,
-        retry_backoff=args.retry_backoff,
-        retry_backoff_max=args.retry_backoff_max,
-    )
-    client.open_report()
-    client.select_municipio_geo()
-    _, municipios = client.select_state(state)
-    return municipios
-
-
 def read_or_download_chunk(
     args: argparse.Namespace,
+    client: SisabClient,
+    competencia: str,
     state: State,
     municipios: list[str],
 ) -> list[dict[str, object]]:
-    cache_path = chunk_cache_path(args.raw_dir, args.competencia, state, municipios)
+    cache_path = chunk_cache_path(args.raw_dir, competencia, state, municipios)
     expected_municipios = set(municipios)
     if cache_path.exists() and not args.no_resume:
+        # Cached raw chunks are revalidated before reuse.
         LOGGER.info("%s: using cached raw chunk %s", state.uf, cache_path)
         csv_text = cache_path.read_text(encoding="ISO-8859-1")
-        rows = parse_sisab_csv(csv_text, args.competencia, state.uf)
-        validate_rows(rows, expected_municipios, state, args.competencia)
+        rows = parse_sisab_csv(csv_text, competencia, state.uf)
+        validate_rows(rows, expected_municipios, state, competencia)
         return rows
 
     try:
-        client = prepare_state_client(args, state)
-        csv_text = client.download_csv(args.competencia, state, municipios)
+        csv_text = client.download_csv(competencia, state, municipios)
     except (requests.RequestException, SisabError) as error:
+        # Large municipality selections can time out; split and retry smaller work.
         if args.adaptive_chunks and len(municipios) > 1:
+            client = prepare_state_client(args, state)
             midpoint = len(municipios) // 2
             LOGGER.warning(
                 "%s: chunk with %d municipalities failed after retries; splitting into %d and %d",
@@ -482,15 +533,17 @@ def read_or_download_chunk(
                 midpoint,
                 len(municipios) - midpoint,
             )
-            return read_or_download_chunk(args, state, municipios[:midpoint]) + read_or_download_chunk(
-                args, state, municipios[midpoint:]
+            return read_or_download_chunk(args, client, competencia, state, municipios[:midpoint]) + read_or_download_chunk(
+                args, client, competencia, state, municipios[midpoint:]
             )
         raise error
 
-    rows = parse_sisab_csv(csv_text, args.competencia, state.uf)
-    validate_rows(rows, expected_municipios, state, args.competencia)
+    rows = parse_sisab_csv(csv_text, competencia, state.uf)
+    validate_rows(rows, expected_municipios, state, competencia)
     if not args.no_raw_cache:
-        write_text_atomic(cache_path, csv_text, encoding="ISO-8859-1")
+        with cache_lock(cache_path, args.lock_timeout):
+            if not cache_path.exists():
+                write_text_atomic(cache_path, csv_text, encoding="ISO-8859-1")
     return rows
 
 
@@ -518,21 +571,57 @@ def valid_competencia(value: str) -> str:
     return value
 
 
+def competencia_to_month_index(value: str) -> int:
+    return int(value[:4]) * 12 + int(value[4:6]) - 1
+
+
+def month_index_to_competencia(index: int) -> str:
+    year = index // 12
+    month = index % 12 + 1
+    return f"{year:04d}{month:02d}"
+
+
+def expand_competencias(values: list[str]) -> list[str]:
+    if len(values) == 1:
+        return values
+    if len(values) != 2:
+        raise argparse.ArgumentTypeError("--competencia accepts one value or a start/end pair.")
+
+    start, end = values
+    # Convert YYYYMM to a linear month number to handle year boundaries.
+    start_index = competencia_to_month_index(start)
+    end_index = competencia_to_month_index(end)
+    if start_index > end_index:
+        raise argparse.ArgumentTypeError("Competencia start must be earlier than or equal to end.")
+    return [month_index_to_competencia(index) for index in range(start_index, end_index + 1)]
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Scrape SISAB Saude Producao for one competencia and output tidy CSV."
+        description="Scrape SISAB Saude Producao for one competencia or an inclusive range."
     )
     parser.add_argument(
         "--competencia",
         required=True,
+        nargs="+",
         type=valid_competencia,
-        help="Single competencia in YYYYMM format, e.g. 202604.",
+        metavar="YYYYMM",
+        help="One competencia or start/end pair, e.g. 202604 or 202601 202604.",
     )
     parser.add_argument(
         "--output",
         type=Path,
         default=None,
-        help="Output tidy CSV path. Defaults to data/sisab_saude_producao_<competencia>.csv.",
+        help=(
+            "Output tidy CSV path for single-competencia runs. "
+            "Defaults to <output-dir>/sisab_saude_producao_<competencia>_<uf-label>.csv."
+        ),
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("data"),
+        help="Directory for default output CSVs. Default: data.",
     )
     parser.add_argument(
         "--state",
@@ -607,49 +696,90 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Logging verbosity. Default: INFO.",
     )
+    parser.add_argument(
+        "--json-log",
+        action="store_true",
+        help="Emit progress logs as JSON lines on stderr.",
+    )
+    parser.add_argument(
+        "--lock-timeout",
+        type=float,
+        default=3600.0,
+        help="Seconds to wait for raw cache write locks. Default: 3600.",
+    )
     return parser
 
 
-def configure_logging(level: str) -> None:
-    logging.basicConfig(
-        level=getattr(logging, level),
-        format="%(asctime)s %(levelname)s %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-
-def run(args: argparse.Namespace) -> Path:
-    output = args.output or Path("data") / f"sisab_saude_producao_{args.competencia}.csv"
-    all_rows: list[dict[str, object]] = []
-
-    discovery = SisabClient(
-        delay=args.delay,
-        timeout=args.timeout,
-        retries=args.retries,
-        retry_backoff=args.retry_backoff,
-        retry_backoff_max=args.retry_backoff_max,
-    )
-    discovery.open_report()
-    form = discovery._require_form()
-    if args.competencia not in form.competencias:
-        available = ", ".join(sorted(form.competencias, reverse=True)[:12])
-        raise SisabError(
-            f"Competencia {args.competencia} is not available on SISAB. "
-            f"Recent available values: {available}"
+def configure_logging(level: str, json_log: bool = False) -> None:
+    handler = logging.StreamHandler()
+    if json_log:
+        handler.setFormatter(JsonLogFormatter())
+    else:
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s %(levelname)s %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
         )
-    _, states = discovery.select_municipio_geo()
-    states = filter_states(states, args.state)
+    logging.basicConfig(level=getattr(logging, level), handlers=[handler], force=True)
 
+
+def state_output_label(states: list[State]) -> str:
+    if len(states) == 27:
+        return "all_ufs"
+    return "_".join(state.uf for state in states)
+
+
+def default_output_path(output_dir: Path, competencia: str, states: list[State]) -> Path:
+    return output_dir / f"sisab_saude_producao_{competencia}_{state_output_label(states)}.csv"
+
+
+def load_municipios_by_state(args: argparse.Namespace, states: list[State]) -> dict[str, list[str]]:
+    municipios_by_state: dict[str, list[str]] = {}
     for index, state in enumerate(states, start=1):
         LOGGER.info("[%02d/%02d] %s: loading municipalities", index, len(states), state.uf)
-        municipios = load_state_municipios(args, state)
+        client = SisabClient(
+            delay=args.delay,
+            timeout=args.timeout,
+            retries=args.retries,
+            retry_backoff=args.retry_backoff,
+            retry_backoff_max=args.retry_backoff_max,
+        )
+        client.open_report()
+        client.select_municipio_geo()
+        _, municipios = client.select_state(state)
+        municipios_by_state[state.uf] = municipios
+    return municipios_by_state
+
+
+def run_competencia(
+    args: argparse.Namespace,
+    competencia: str,
+    states: list[State],
+    municipios_by_state: dict[str, list[str]],
+) -> Path:
+    output = args.output or default_output_path(args.output_dir, competencia, states)
+    all_rows: list[dict[str, object]] = []
+
+    for index, state in enumerate(states, start=1):
+        LOGGER.info(
+            "%s [%02d/%02d] %s: loading municipalities",
+            competencia,
+            index,
+            len(states),
+            state.uf,
+        )
+        municipios = municipios_by_state[state.uf]
+        client = prepare_state_client(args, state)
+        # Chunking keeps SISAB form submissions small enough for large UFs.
         municipio_chunks = list(chunks(municipios, args.municipality_chunk_size))
 
         state_rows: list[dict[str, object]] = []
         for chunk_index, municipio_chunk in enumerate(municipio_chunks, start=1):
             started = time.monotonic()
             LOGGER.info(
-                "[%02d/%02d] %s: chunk %d/%d (%d municipalities)",
+                "%s [%02d/%02d] %s: chunk %d/%d (%d municipalities)",
+                competencia,
                 index,
                 len(states),
                 state.uf,
@@ -657,9 +787,10 @@ def run(args: argparse.Namespace) -> Path:
                 len(municipio_chunks),
                 len(municipio_chunk),
             )
-            chunk_rows = read_or_download_chunk(args, state, municipio_chunk)
+            chunk_rows = read_or_download_chunk(args, client, competencia, state, municipio_chunk)
             LOGGER.info(
-                "[%02d/%02d] %s: chunk %d/%d yielded %d tidy rows in %.1fs",
+                "%s [%02d/%02d] %s: chunk %d/%d yielded %d tidy rows in %.1fs",
+                competencia,
                 index,
                 len(states),
                 state.uf,
@@ -670,10 +801,11 @@ def run(args: argparse.Namespace) -> Path:
             )
             state_rows.extend(chunk_rows)
 
-        validate_rows(state_rows, set(municipios), state, args.competencia)
+        validate_rows(state_rows, set(municipios), state, competencia)
 
         LOGGER.info(
-            "[%02d/%02d] %s: %d tidy rows",
+            "%s [%02d/%02d] %s: %d tidy rows",
+            competencia,
             index,
             len(states),
             state.uf,
@@ -681,20 +813,50 @@ def run(args: argparse.Namespace) -> Path:
         )
         all_rows.extend(state_rows)
 
-    write_tidy_csv(output, all_rows)
+    write_tidy_csv(output, sort_tidy_rows(all_rows))
     return output
+
+
+def run(args: argparse.Namespace) -> list[Path]:
+    competencias = expand_competencias(args.competencia)
+    if args.output and len(competencias) > 1:
+        raise SisabError("--output can only be used when scraping a single competencia.")
+
+    # Discover available months and UFs once, then run each competencia separately.
+    discovery = SisabClient(
+        delay=args.delay,
+        timeout=args.timeout,
+        retries=args.retries,
+        retry_backoff=args.retry_backoff,
+        retry_backoff_max=args.retry_backoff_max,
+    )
+    discovery.open_report()
+    form = discovery._require_form()
+    missing_competencias = [item for item in competencias if item not in form.competencias]
+    if missing_competencias:
+        available = ", ".join(sorted(form.competencias, reverse=True)[:12])
+        raise SisabError(
+            f"Competencia(s) not available on SISAB: {', '.join(missing_competencias)}. "
+            f"Recent available values: {available}"
+        )
+    _, states = discovery.select_municipio_geo()
+    states = filter_states(states, args.state)
+    municipios_by_state = load_municipios_by_state(args, states)
+
+    return [run_competencia(args, competencia, states, municipios_by_state) for competencia in competencias]
 
 
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
-    configure_logging(args.log_level)
+    configure_logging(args.log_level, args.json_log)
     try:
-        output = run(args)
+        outputs = run(args)
     except (requests.RequestException, SisabError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    print(output)
+    for output in outputs:
+        print(output)
     return 0
 
 

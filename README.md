@@ -23,17 +23,37 @@ python3 -m venv .venv
 pip install -r requirements.txt
 ```
 
+You can also install the command entry point:
+
+```bash
+pip install -e .
+sisab-saude-producao --help
+```
+
 ## Run
 
 ```bash
 python3 scripts/sisab_saude_producao.py --competencia 202604
 ```
 
+You can also pass an inclusive competência interval. This writes one separate
+CSV per month:
+
+```bash
+python3 scripts/sisab_saude_producao.py --competencia 202601 202604
+```
+
 The default output path is:
 
 ```text
-data/sisab_saude_producao_202604.csv
+data/sisab_saude_producao_202604_all_ufs.csv
 ```
+
+For state-limited runs, the default file includes the selected UF acronym(s),
+for example `data/sisab_saude_producao_202604_AC.csv` or
+`data/sisab_saude_producao_202604_AC_SP.csv`. Use `--output-dir` to change the
+directory for default outputs. `--output` is only accepted for single-competência
+runs.
 
 The CSV columns are:
 
@@ -44,7 +64,8 @@ competencia,uf,ibge,municipio,tipo_producao,valor
 The final CSV is written atomically only after the whole requested run succeeds.
 Raw SISAB CSV chunks are cached under `data/raw/sisab_saude_producao` so failed
 runs can resume without redownloading completed chunks. Use `--no-resume` to
-ignore cached chunks, or `--no-raw-cache` to avoid saving them.
+ignore cached chunks, or `--no-raw-cache` to avoid saving them. Raw cache writes
+use lock files so concurrent runs do not write the same chunk at once.
 
 To test with only one UF:
 
@@ -79,7 +100,14 @@ chunks by default. A single-municipality failure aborts the run.
 
 The script validates that the requested competência exists on the SISAB page and
 that all requested municipalities and expected production categories are present
-before creating the final tidy CSV.
+before creating the final tidy CSV. Final rows are sorted by competência, UF,
+municipality IBGE code, and production type.
+
+For machine-readable progress logs:
+
+```bash
+python3 scripts/sisab_saude_producao.py --competencia 202604 --json-log
+```
 
 ## Tests
 
