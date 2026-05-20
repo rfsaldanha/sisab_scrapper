@@ -14,6 +14,8 @@ dependencies = [
 
 [project.scripts]
 sisab-saude-producao = "scripts.sisab_saude_producao:main"
+sisab-saude-procedimento = "scripts.sisab_saude_procedimento:main"
+sisab-saude-condicao-avaliada = "scripts.sisab_saude_condicao_avaliada:main"
 
 [tool.setuptools.packages.find]
 include = ["scripts*"]

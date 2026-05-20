@@ -1,12 +1,16 @@
 # AGENTS.md
 
-Python scraper for SISAB Saúde Produção. Main file: `scripts/sisab_saude_producao.py`.
+Python scrapers for SISAB Saúde Produção. Main files: `scripts/sisab_saude_producao.py`, `scripts/sisab_saude_procedimento.py`, and `scripts/sisab_saude_condicao_avaliada.py`.
 
 Fixed scrape config: `Municípios`; all UFs unless `--state`; all municipalities per UF; one `--competencia` or inclusive start/end pair; Linha `Municipio`; Coluna `Tipo de Produção`; no filters. Tidy output columns:
 
 ```text
 competencia,uf,ibge,municipio,tipo_producao,valor
 ```
+
+Procedimento scraper uses Coluna `Procedimento`, selects all `Procedimento` filter values, and outputs `competencia,uf,ibge,municipio,procedimento,valor`.
+
+Condição Avaliada scraper uses Coluna `Probl/ Condição Avaliada`, selects all `Problema/Condição Avaliada` filter values, and outputs `competencia,uf,ibge,municipio,condicao_avaliada,valor`.
 
 Preserve these rules:
 
@@ -25,5 +29,7 @@ python3 -m unittest discover -s tests
 python3 scripts/sisab_saude_producao.py --competencia 202604
 python3 scripts/sisab_saude_producao.py --competencia 202601 202604
 sisab-saude-producao --competencia 202604 --json-log
+sisab-saude-procedimento --competencia 202604 --json-log
+sisab-saude-condicao-avaliada --competencia 202604 --json-log
 python3 scripts/sisab_saude_producao.py --competencia 202604 --state AC --output /tmp/sisab_ac.csv --raw-dir /tmp/sisab_raw_cache --delay 0.2 --timeout 300 --retries 1 --retry-backoff 0.2 --retry-backoff-max 1
 ```

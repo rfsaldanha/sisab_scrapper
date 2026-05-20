@@ -15,6 +15,18 @@ Current configuration:
 - Filters: none
 - Output: tidy CSV
 
+There is also a sibling scraper for the same report with:
+
+- Coluna: `Procedimento`
+- Procedimento filter: all options selected
+- Output: tidy CSV with one row per municipality/procedimento
+
+And another sibling scraper with:
+
+- Coluna: `Probl/ Condição Avaliada`
+- Problema/Condição Avaliada filter: all options selected
+- Output: tidy CSV with one row per municipality/condição avaliada
+
 ## Setup
 
 ```bash
@@ -28,12 +40,26 @@ You can also install the command entry point:
 ```bash
 pip install -e .
 sisab-saude-producao --help
+sisab-saude-procedimento --help
+sisab-saude-condicao-avaliada --help
 ```
 
 ## Run
 
 ```bash
 python3 scripts/sisab_saude_producao.py --competencia 202604
+```
+
+For the Procedimento report:
+
+```bash
+python3 scripts/sisab_saude_procedimento.py --competencia 202604
+```
+
+For the Problema/Condição Avaliada report:
+
+```bash
+python3 scripts/sisab_saude_condicao_avaliada.py --competencia 202604
 ```
 
 You can also pass an inclusive competência interval. This writes one separate
@@ -59,6 +85,18 @@ The CSV columns are:
 
 ```text
 competencia,uf,ibge,municipio,tipo_producao,valor
+```
+
+The Procedimento CSV columns are:
+
+```text
+competencia,uf,ibge,municipio,procedimento,valor
+```
+
+The Problema/Condição Avaliada CSV columns are:
+
+```text
+competencia,uf,ibge,municipio,condicao_avaliada,valor
 ```
 
 The final CSV is written atomically only after the whole requested run succeeds.
