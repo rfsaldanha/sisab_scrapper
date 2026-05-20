@@ -1,31 +1,25 @@
 # sisab_scrapper
 
-Scraper for the SISAB Saúde: Atendimento/Visita production report:
+Scrapers for the SISAB Saúde: Atendimento/Visita production report:
 
 https://sisab.saude.gov.br/paginas/acessoRestrito/relatorio/federal/saude/RelSauProducao.xhtml
 
-Current configuration:
+All scrapers use the same base configuration:
 
 - Unidade geográfica: `Municípios`
-- Estado: all UFs by default
-- Município: all municipalities in each selected UF
-- Competência: exactly one per run
+- Estado: all UFs by default, or selected UFs with `--state`
+- Município: all municipalities loaded from each selected UF
+- Competência: one month or an inclusive month interval
 - Linha: `Municipio`
-- Coluna: `Tipo de Produção`
-- Filters: none
-- Output: tidy CSV
+- Output: tidy CSV, one final CSV per competência
 
-There is also a sibling scraper for the same report with:
+Available scrapers:
 
-- Coluna: `Procedimento`
-- Procedimento filter: all options selected
-- Output: tidy CSV with one row per municipality/procedimento
-
-And another sibling scraper with:
-
-- Coluna: `Probl/ Condição Avaliada`
-- Problema/Condição Avaliada filter: all options selected
-- Output: tidy CSV with one row per municipality/condição avaliada
+| Script | Installed command | Coluna do relatório | Extra filter | Output value column |
+| --- | --- | --- | --- | --- |
+| `scripts/sisab_saude_producao.py` | `sisab-saude-producao` | `Tipo de Produção` | none | `tipo_producao` |
+| `scripts/sisab_saude_procedimento.py` | `sisab-saude-procedimento` | `Procedimento` | all `Procedimento` options selected | `procedimento` |
+| `scripts/sisab_saude_condicao_avaliada.py` | `sisab-saude-condicao-avaliada` | `Probl/ Condição Avaliada` | all `Problema/Condição Avaliada` options selected | `condicao_avaliada` |
 
 ## Setup
 
@@ -48,100 +42,95 @@ sisab-saude-condicao-avaliada --help
 
 ```bash
 python3 scripts/sisab_saude_producao.py --competencia 202604
-```
-
-For the Procedimento report:
-
-```bash
 python3 scripts/sisab_saude_procedimento.py --competencia 202604
-```
-
-For the Problema/Condição Avaliada report:
-
-```bash
 python3 scripts/sisab_saude_condicao_avaliada.py --competencia 202604
 ```
 
-You can also pass an inclusive competência interval. This writes one separate
-CSV per month:
+The installed commands are equivalent:
+
+```bash
+sisab-saude-producao --competencia 202604
+sisab-saude-procedimento --competencia 202604
+sisab-saude-condicao-avaliada --competencia 202604
+```
+
+Pass an inclusive competência interval to write one separate CSV per month:
 
 ```bash
 python3 scripts/sisab_saude_producao.py --competencia 202601 202604
 ```
 
-The default output path is:
+Default output paths include the scraper name, competência, and UF label:
 
 ```text
 data/sisab_saude_producao_202604_all_ufs.csv
+data/sisab_saude_procedimento_202604_AC.csv
+data/sisab_saude_condicao_avaliada_202604_AC_SP.csv
 ```
 
-For state-limited runs, the default file includes the selected UF acronym(s),
-for example `data/sisab_saude_producao_202604_AC.csv` or
-`data/sisab_saude_producao_202604_AC_SP.csv`. Use `--output-dir` to change the
-directory for default outputs. `--output` is only accepted for single-competência
-runs.
+Use `--output-dir` to change the directory for default outputs. Use `--output`
+only for single-competência runs.
 
-The CSV columns are:
+Limit UFs with repeated `--state`:
+
+```bash
+python3 scripts/sisab_saude_producao.py --competencia 202604 --state AC --state SP
+```
+
+## Schemas
+
+`sisab-saude-producao`:
 
 ```text
 competencia,uf,ibge,municipio,tipo_producao,valor
 ```
 
-The Procedimento CSV columns are:
+`sisab-saude-procedimento`:
 
 ```text
 competencia,uf,ibge,municipio,procedimento,valor
 ```
 
-The Problema/Condição Avaliada CSV columns are:
+`sisab-saude-condicao-avaliada`:
 
 ```text
 competencia,uf,ibge,municipio,condicao_avaliada,valor
 ```
 
+## Reliability
+
 The final CSV is written atomically only after the whole requested run succeeds.
-Raw SISAB CSV chunks are cached under `data/raw/sisab_saude_producao` so failed
-runs can resume without redownloading completed chunks. Use `--no-resume` to
-ignore cached chunks, or `--no-raw-cache` to avoid saving them. Raw cache writes
-use lock files so concurrent runs do not write the same chunk at once.
+Partial final outputs are not produced.
 
-To test with only one UF:
+Raw SISAB CSV chunks are cached by scraper under:
 
-```bash
-python3 scripts/sisab_saude_producao.py --competencia 202604 --state SP --output data/sp_202604.csv
+```text
+data/raw/sisab_saude_producao
+data/raw/sisab_saude_procedimento
+data/raw/sisab_saude_condicao_avaliada
 ```
 
-The scraper waits before every HTTP request. The default delay is 2 seconds:
+Use `--no-resume` to ignore cached chunks, or `--no-raw-cache` to avoid saving
+them. Raw cache writes use lock files so concurrent runs do not write the same
+chunk at once.
+
+SISAB is slow and intermittently unreliable. Defaults are conservative:
+
+- `--delay 2`
+- `--timeout 900`
+- `--retries 10`
+- exponential retry backoff with jitter
+- `--municipality-chunk-size 10`
+- adaptive chunk splitting after repeated chunk failures
 
 ```bash
-python3 scripts/sisab_saude_producao.py --competencia 202604 --delay 5
+python3 scripts/sisab_saude_producao.py --competencia 202604 --delay 5 --timeout 1200 --retry-backoff 10
 ```
 
-SISAB can be slow and intermittently unreliable. By default the scraper uses a
-900 second HTTP timeout and retries failed HTTP/download requests 10 times
-before aborting. Retries use exponential backoff with jitter:
+Each scraper validates that the requested competência exists on SISAB, that all
+requested municipalities are present, and then writes sorted final rows.
 
-```bash
-python3 scripts/sisab_saude_producao.py --competencia 202604 --timeout 1200 --retries 10 --retry-backoff 10
-```
-
-Large UFs are split into municipality chunks before download to avoid SISAB
-server errors/timeouts on very large form submissions. The default chunk size is
-10:
-
-```bash
-python3 scripts/sisab_saude_producao.py --competencia 202604 --municipality-chunk-size 50
-```
-
-If a chunk still fails after all retries, the scraper splits it into smaller
-chunks by default. A single-municipality failure aborts the run.
-
-The script validates that the requested competência exists on the SISAB page and
-that all requested municipalities and expected production categories are present
-before creating the final tidy CSV. Final rows are sorted by competência, UF,
-municipality IBGE code, and production type.
-
-For machine-readable progress logs:
+Use JSON-lines progress logs when running from automation:
 
 ```bash
 python3 scripts/sisab_saude_producao.py --competencia 202604 --json-log
