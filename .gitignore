@@ -50,3 +50,6 @@ rsconnect/
 
 # Data files
 data/
+
+# Python env
+.venv/
