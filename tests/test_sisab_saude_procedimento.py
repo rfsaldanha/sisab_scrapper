@@ -70,7 +70,7 @@ class SisabProcedimentoParserTest(unittest.TestCase):
         self.assertEqual(sorted_rows[1]["ibge"], "2")
 
     def test_default_output_path_includes_state_label(self) -> None:
-        path = default_output_path(Path("out"), "202604", [State("12", "AC")])
+        path = default_output_path(Path("out"), "202604", State("12", "AC"))
 
         self.assertEqual(str(path), "out/sisab_saude_procedimento_202604_AC.csv")
 

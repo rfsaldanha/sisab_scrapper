@@ -1,6 +1,6 @@
 # AGENTS.md
 
-SISAB Saúde Produção scrapers. Shared base: `Municípios`; all UFs unless `--state`; all municipalities per UF; one `--competencia` or inclusive start/end pair; Linha `Municipio`; tidy CSV; one final CSV per competência.
+SISAB Saúde Produção scrapers. Shared base: `Municípios`; all UFs unless `--state`; all municipalities per UF; one `--competencia` or inclusive start/end pair; Linha `Municipio`; tidy CSV; one final CSV per competência per UF.
 
 Scripts/commands:
 
@@ -13,8 +13,9 @@ Preserve:
 - SISAB is slow/flaky: keep long timeouts, retries, backoff, delays, adaptive chunks.
 - Missing municipality rows can mean zero events: retry that case once, then continue.
 - Revalidate cached raw chunks before reuse; malformed cached chunks must be redownloaded.
-- Never write final CSV until the full requested run succeeds; partial final output is useless.
-- Competência ranges write separate CSVs; `--output` is single-month only.
+- Shared municipality cache defaults to `data/raw/sisab_municipios.json`; keep `--refresh-municipality-cache`.
+- Final CSVs are per competência/UF and must be written atomically.
+- `--output` is valid only for exactly one competência and one UF.
 - Keep raw chunk cache/resume, cache locks, municipality caching, sorted final rows, validation.
 - Repeated single-municipality missing rows are accepted after the one confirmation retry; other repeated failures abort.
 - Do not add derived columns unless requested.

@@ -1,3 +1,4 @@
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -8,9 +9,10 @@ from scripts.sisab_saude_producao import (
     expand_competencias,
     parse_sisab_csv,
     parse_br_integer,
+    read_municipality_cache,
     sort_tidy_rows,
-    state_output_label,
     validate_rows,
+    write_municipality_cache,
 )
 
 
@@ -97,14 +99,28 @@ class SisabParserTest(unittest.TestCase):
         self.assertEqual(sorted_rows[0]["competencia"], "202603")
         self.assertEqual(sorted_rows[1]["ibge"], "2")
 
-    def test_state_output_label_and_default_output_path(self) -> None:
-        states = [State("12", "AC"), State("35", "SP")]
-
-        self.assertEqual(state_output_label(states), "AC_SP")
+    def test_default_output_path_includes_state_label(self) -> None:
         self.assertEqual(
-            str(default_output_path(Path("out"), "202604", states)),
-            "out/sisab_saude_producao_202604_AC_SP.csv",
+            str(default_output_path(Path("out"), "202604", State("12", "AC"))),
+            "out/sisab_saude_producao_202604_AC.csv",
         )
+
+    def test_municipality_cache_round_trip(self) -> None:
+        states = [State("12", "AC"), State("35", "SP")]
+        municipios = {"AC": ["120001", "120005"], "SP": ["350010"]}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "municipios.json"
+            write_municipality_cache(cache_path, states, municipios)
+
+            self.assertEqual(read_municipality_cache(cache_path, states), municipios)
+
+    def test_municipality_cache_miss_when_state_is_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "municipios.json"
+            write_municipality_cache(cache_path, [State("12", "AC")], {"AC": ["120001"]})
+
+            self.assertIsNone(read_municipality_cache(cache_path, [State("35", "SP")]))
 
     def test_expand_competencias_accepts_single_month(self) -> None:
         self.assertEqual(expand_competencias(["202604"]), ["202604"])

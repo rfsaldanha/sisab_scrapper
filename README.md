@@ -11,7 +11,7 @@ All scrapers use the same base configuration:
 - Município: all municipalities loaded from each selected UF
 - Competência: one month or an inclusive month interval
 - Linha: `Municipio`
-- Output: tidy CSV, one final CSV per competência
+- Output: tidy CSVs, one final CSV per competência per UF
 
 Available scrapers:
 
@@ -54,22 +54,22 @@ sisab-saude-procedimento --competencia 202604
 sisab-saude-condicao-avaliada --competencia 202604
 ```
 
-Pass an inclusive competência interval to write one separate CSV per month:
+Pass an inclusive competência interval to write separate CSVs per month and UF:
 
 ```bash
 python3 scripts/sisab_saude_producao.py --competencia 202601 202604
 ```
 
-Default output paths include the scraper name, competência, and UF label:
+Default output paths include the scraper name, competência, and UF:
 
 ```text
-data/sisab_saude_producao_202604_all_ufs.csv
+data/sisab_saude_producao_202604_AC.csv
 data/sisab_saude_procedimento_202604_AC.csv
-data/sisab_saude_condicao_avaliada_202604_AC_SP.csv
+data/sisab_saude_condicao_avaliada_202604_SP.csv
 ```
 
 Use `--output-dir` to change the directory for default outputs. Use `--output`
-only for single-competência runs.
+only when scraping exactly one competência and one UF.
 
 Limit UFs with repeated `--state`:
 
@@ -99,8 +99,7 @@ competencia,uf,ibge,municipio,condicao_avaliada,valor
 
 ## Reliability
 
-The final CSV is written atomically only after the whole requested run succeeds.
-Partial final outputs are not produced.
+Each final CSV is written atomically after its competência/UF run succeeds.
 
 Raw SISAB CSV chunks are cached by scraper under:
 
@@ -113,6 +112,11 @@ data/raw/sisab_saude_condicao_avaliada
 Use `--no-resume` to ignore cached chunks, or `--no-raw-cache` to avoid saving
 them. Raw cache writes use lock files so concurrent runs do not write the same
 chunk at once.
+
+Municipality lists are cached once for all scrapers at
+`data/raw/sisab_municipios.json`, which avoids reloading every UF on repeated
+runs. Use `--refresh-municipality-cache` to force a live reload, or
+`--municipality-cache PATH` to choose another cache file.
 
 SISAB is slow and intermittently unreliable. Defaults are conservative:
 
