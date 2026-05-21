@@ -11,10 +11,12 @@ Scripts/commands:
 Preserve:
 
 - SISAB is slow/flaky: keep long timeouts, retries, backoff, delays, adaptive chunks.
+- Missing municipality rows can mean zero events: retry that case once, then continue.
+- Revalidate cached raw chunks before reuse; malformed cached chunks must be redownloaded.
 - Never write final CSV until the full requested run succeeds; partial final output is useless.
 - Competência ranges write separate CSVs; `--output` is single-month only.
 - Keep raw chunk cache/resume, cache locks, municipality caching, sorted final rows, validation.
-- Repeated single-municipality failure aborts.
+- Repeated single-municipality missing rows are accepted after the one confirmation retry; other repeated failures abort.
 - Do not add derived columns unless requested.
 - Do not commit generated outputs/caches: `data/`, `data/raw/sisab_saude_*`, `__pycache__/`, `*.pyc`.
 

@@ -44,6 +44,20 @@ class SisabCondicaoAvaliadaParserTest(unittest.TestCase):
         with self.assertRaises(SisabError):
             validate_rows(rows, {"120001", "120005", "120010"}, State("12", "AC"), "202604")
 
+    def test_validate_rows_can_allow_zero_row_municipality(self) -> None:
+        rows = parse_sisab_csv(SISAB_CONDICAO_CSV, "202604", "AC")
+
+        validate_rows(
+            rows,
+            {"120001", "120005", "120010"},
+            State("12", "AC"),
+            "202604",
+            allow_missing_municipios=True,
+        )
+
+    def test_validate_rows_can_allow_empty_zero_event_chunk(self) -> None:
+        validate_rows([], {"120010"}, State("12", "AC"), "202604", allow_missing_municipios=True)
+
     def test_sort_tidy_rows_is_stable_for_output(self) -> None:
         rows = [
             {"competencia": "202604", "uf": "AC", "ibge": "2", "municipio": "B", "condicao_avaliada": "Z", "valor": 1},

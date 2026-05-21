@@ -61,6 +61,20 @@ class SisabParserTest(unittest.TestCase):
         with self.assertRaises(SisabError):
             validate_rows(rows, {"120001", "120005", "120010"}, State("12", "AC"), "202604")
 
+    def test_validate_rows_can_allow_zero_row_municipality(self) -> None:
+        rows = parse_sisab_csv(SISAB_CSV, "202604", "AC")
+
+        validate_rows(
+            rows,
+            {"120001", "120005", "120010"},
+            State("12", "AC"),
+            "202604",
+            allow_missing_municipios=True,
+        )
+
+    def test_validate_rows_can_allow_empty_zero_event_chunk(self) -> None:
+        validate_rows([], {"120010"}, State("12", "AC"), "202604", allow_missing_municipios=True)
+
     def test_validate_rows_rejects_incomplete_categories(self) -> None:
         rows = parse_sisab_csv(
             "Uf;Ibge;Municipio;Atendimento Individual;Procedimento;Visita Domiciliar;\n"

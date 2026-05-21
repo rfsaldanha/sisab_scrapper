@@ -122,13 +122,16 @@ SISAB is slow and intermittently unreliable. Defaults are conservative:
 - exponential retry backoff with jitter
 - `--municipality-chunk-size 10`
 - adaptive chunk splitting after repeated chunk failures
+- missing municipality rows are retried once, then treated as zero-event municipalities
 
 ```bash
 python3 scripts/sisab_saude_producao.py --competencia 202604 --delay 5 --timeout 1200 --retry-backoff 10
 ```
 
-Each scraper validates that the requested competência exists on SISAB, that all
-requested municipalities are present, and then writes sorted final rows.
+Each scraper validates that the requested competência exists on SISAB and writes
+sorted final rows. If SISAB returns no rows for a requested municipality, the
+chunk is retried once to confirm the absence, then the run continues. Cached raw
+chunks are revalidated before reuse; invalid cached chunks are redownloaded.
 
 Use JSON-lines progress logs when running from automation:
 

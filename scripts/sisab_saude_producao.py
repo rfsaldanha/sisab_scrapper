@@ -67,6 +67,10 @@ class SisabError(RuntimeError):
     pass
 
 
+class MissingMunicipalityRowsError(SisabError):
+    pass
+
+
 class JsonLogFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload = {
@@ -364,17 +368,19 @@ def validate_rows(
     expected_municipios: set[str],
     state: State,
     competencia: str,
+    allow_missing_municipios: bool = False,
 ) -> None:
-    # Fail before final output if SISAB silently drops or adds municipalities.
     if not rows:
-        raise SisabError(f"SISAB returned no data rows for {state.uf} {competencia}.")
+        if allow_missing_municipios and expected_municipios:
+            return
+        raise MissingMunicipalityRowsError(f"SISAB returned no data rows for {state.uf} {competencia}.")
 
     seen_municipios = {str(row["ibge"]) for row in rows}
     missing = expected_municipios - seen_municipios
-    if missing:
+    if missing and not allow_missing_municipios:
         sample = ", ".join(sorted(missing)[:10])
         suffix = "..." if len(missing) > 10 else ""
-        raise SisabError(
+        raise MissingMunicipalityRowsError(
             f"SISAB returned no rows for {len(missing)} requested municipalities "
             f"in {state.uf} {competencia}: {sample}{suffix}"
         )
@@ -511,40 +517,69 @@ def read_or_download_chunk(
 ) -> list[dict[str, object]]:
     cache_path = chunk_cache_path(args.raw_dir, competencia, state, municipios)
     expected_municipios = set(municipios)
+    invalid_cache = False
     if cache_path.exists() and not args.no_resume:
         # Cached raw chunks are revalidated before reuse.
         LOGGER.info("%s: using cached raw chunk %s", state.uf, cache_path)
         csv_text = cache_path.read_text(encoding="ISO-8859-1")
-        rows = parse_sisab_csv(csv_text, competencia, state.uf)
-        validate_rows(rows, expected_municipios, state, competencia)
-        return rows
+        try:
+            rows = parse_sisab_csv(csv_text, competencia, state.uf)
+            validate_rows(rows, expected_municipios, state, competencia, allow_missing_municipios=True)
+            return rows
+        except SisabError as error:
+            invalid_cache = True
+            LOGGER.warning("%s: cached raw chunk failed validation; redownloading: %s", state.uf, error)
 
-    try:
-        csv_text = client.download_csv(competencia, state, municipios)
-    except (requests.RequestException, SisabError) as error:
-        # Large municipality selections can time out; split and retry smaller work.
-        if args.adaptive_chunks and len(municipios) > 1:
-            client = prepare_state_client(args, state)
-            midpoint = len(municipios) // 2
-            LOGGER.warning(
-                "%s: chunk with %d municipalities failed after retries; splitting into %d and %d",
-                state.uf,
-                len(municipios),
-                midpoint,
-                len(municipios) - midpoint,
-            )
-            return read_or_download_chunk(args, client, competencia, state, municipios[:midpoint]) + read_or_download_chunk(
-                args, client, competencia, state, municipios[midpoint:]
-            )
-        raise error
+    last_error: Exception | None = None
+    missing_retry_used = False
+    for attempt in range(1, args.retries + 2):
+        try:
+            csv_text = client.download_csv(competencia, state, municipios)
+            rows = parse_sisab_csv(csv_text, competencia, state.uf)
+            try:
+                validate_rows(rows, expected_municipios, state, competencia)
+            except MissingMunicipalityRowsError as error:
+                if not missing_retry_used:
+                    missing_retry_used = True
+                    LOGGER.warning("%s: %s; retrying once to confirm zero-event municipalities", state.uf, error)
+                    client = prepare_state_client(args, state)
+                    client._retry_sleep(1)
+                    continue
+                LOGGER.warning("%s: accepting chunk with zero-row municipalities after confirmation: %s", state.uf, error)
+                validate_rows(rows, expected_municipios, state, competencia, allow_missing_municipios=True)
+            if not args.no_raw_cache:
+                with cache_lock(cache_path, args.lock_timeout):
+                    if invalid_cache or not cache_path.exists():
+                        write_text_atomic(cache_path, csv_text, encoding="ISO-8859-1")
+            return rows
+        except (requests.RequestException, SisabError) as error:
+            last_error = error
+            if attempt <= args.retries:
+                LOGGER.warning(
+                    "%s: chunk validation/download failed (%d/%d); retrying: %s",
+                    state.uf,
+                    attempt,
+                    args.retries + 1,
+                    error,
+                )
+                client = prepare_state_client(args, state)
+                client._retry_sleep(attempt)
 
-    rows = parse_sisab_csv(csv_text, competencia, state.uf)
-    validate_rows(rows, expected_municipios, state, competencia)
-    if not args.no_raw_cache:
-        with cache_lock(cache_path, args.lock_timeout):
-            if not cache_path.exists():
-                write_text_atomic(cache_path, csv_text, encoding="ISO-8859-1")
-    return rows
+    # Large municipality selections can time out or return incomplete CSVs; split smaller.
+    if args.adaptive_chunks and len(municipios) > 1:
+        client = prepare_state_client(args, state)
+        midpoint = len(municipios) // 2
+        LOGGER.warning(
+            "%s: chunk with %d municipalities failed after retries; splitting into %d and %d",
+            state.uf,
+            len(municipios),
+            midpoint,
+            len(municipios) - midpoint,
+        )
+        return read_or_download_chunk(args, client, competencia, state, municipios[:midpoint]) + read_or_download_chunk(
+            args, client, competencia, state, municipios[midpoint:]
+        )
+    raise last_error or SisabError("SISAB chunk failed without an exception.")
 
 
 def filter_states(states: list[State], wanted: list[str]) -> list[State]:
@@ -801,7 +836,7 @@ def run_competencia(
             )
             state_rows.extend(chunk_rows)
 
-        validate_rows(state_rows, set(municipios), state, competencia)
+        validate_rows(state_rows, set(municipios), state, competencia, allow_missing_municipios=True)
 
         LOGGER.info(
             "%s [%02d/%02d] %s: %d tidy rows",
