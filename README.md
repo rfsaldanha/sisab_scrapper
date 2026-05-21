@@ -2,16 +2,16 @@
 
 Scrapers for the SISAB Saúde: Atendimento/Visita production report:
 
-https://sisab.saude.gov.br/paginas/acessoRestrito/relatorio/federal/saude/RelSauProducao.xhtml
+https://sisab.saude.gov.br/paginas/acessoRestrito/relatorio/municipio/saude/RelSauProducao.xhtml
 
 All scrapers use the same base configuration:
 
 - Unidade geográfica: `Municípios`
-- Estado: all UFs by default, or selected UFs with `--state`
-- Município: all municipalities loaded from each selected UF
+- Estado: all UFs
+- Município: all municipalities
 - Competência: one month or an inclusive month interval
 - Linha: `Municipio`
-- Output: tidy CSVs, one final CSV per competência per UF
+- Output: tidy CSV, one final CSV per competência
 
 Available scrapers:
 
@@ -54,28 +54,21 @@ sisab-saude-procedimento --competencia 202604
 sisab-saude-condicao-avaliada --competencia 202604
 ```
 
-Pass an inclusive competência interval to write separate CSVs per month and UF:
+Pass an inclusive competência interval to write one separate CSV per month:
 
 ```bash
 python3 scripts/sisab_saude_producao.py --competencia 202601 202604
 ```
 
-Default output paths include the scraper name, competência, and UF:
+Default output paths include the scraper name and competência:
 
 ```text
-data/sisab_saude_producao_202604_AC.csv
-data/sisab_saude_procedimento_202604_AC.csv
-data/sisab_saude_condicao_avaliada_202604_SP.csv
+data/sisab_saude_producao_202604.csv
+data/sisab_saude_procedimento_202604.csv
+data/sisab_saude_condicao_avaliada_202604.csv
 ```
 
-Use `--output-dir` to change the directory for default outputs. Use `--output`
-only when scraping exactly one competência and one UF.
-
-Limit UFs with repeated `--state`:
-
-```bash
-python3 scripts/sisab_saude_producao.py --competencia 202604 --state AC --state SP
-```
+Use `--output-dir` to change the directory for default outputs.
 
 ## Schemas
 
@@ -99,9 +92,9 @@ competencia,uf,ibge,municipio,condicao_avaliada,valor
 
 ## Reliability
 
-Each final CSV is written atomically after its competência/UF run succeeds.
+Each final CSV is written atomically after its competência run succeeds.
 
-Raw SISAB CSV chunks are cached by scraper under:
+Raw all-Brazil SISAB CSVs are cached by scraper under:
 
 ```text
 data/raw/sisab_saude_producao
@@ -109,14 +102,9 @@ data/raw/sisab_saude_procedimento
 data/raw/sisab_saude_condicao_avaliada
 ```
 
-Use `--no-resume` to ignore cached chunks, or `--no-raw-cache` to avoid saving
+Use `--no-resume` to ignore cached raw CSVs, or `--no-raw-cache` to avoid saving
 them. Raw cache writes use lock files so concurrent runs do not write the same
-chunk at once.
-
-Municipality lists are cached once for all scrapers at
-`data/raw/sisab_municipios.json`, which avoids reloading every UF on repeated
-runs. Use `--refresh-municipality-cache` to force a live reload, or
-`--municipality-cache PATH` to choose another cache file.
+CSV at once.
 
 SISAB is slow and intermittently unreliable. Defaults are conservative:
 
@@ -124,18 +112,14 @@ SISAB is slow and intermittently unreliable. Defaults are conservative:
 - `--timeout 900`
 - `--retries 10`
 - exponential retry backoff with jitter
-- `--municipality-chunk-size 10`
-- adaptive chunk splitting after repeated chunk failures
-- missing municipality rows are retried once, then treated as zero-event municipalities
 
 ```bash
 python3 scripts/sisab_saude_producao.py --competencia 202604 --delay 5 --timeout 1200 --retry-backoff 10
 ```
 
 Each scraper validates that the requested competência exists on SISAB and writes
-sorted final rows. If SISAB returns no rows for a requested municipality, the
-chunk is retried once to confirm the absence, then the run continues. Cached raw
-chunks are revalidated before reuse; invalid cached chunks are redownloaded.
+sorted final rows. Cached raw CSVs are revalidated before reuse; invalid cached
+CSVs are redownloaded.
 
 Use JSON-lines progress logs when running from automation:
 

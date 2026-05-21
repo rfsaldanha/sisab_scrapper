@@ -1,6 +1,6 @@
 # AGENTS.md
 
-SISAB Saúde Produção scrapers. Shared base: `Municípios`; all UFs unless `--state`; all municipalities per UF; one `--competencia` or inclusive start/end pair; Linha `Municipio`; tidy CSV; one final CSV per competência per UF.
+SISAB Saúde Produção scrapers. Shared base: municipality-level report URL; all UFs and all municipalities in one request per scraper/competência; Linha `Municipio`; tidy CSV; one final CSV per competência.
 
 Scripts/commands:
 
@@ -10,14 +10,10 @@ Scripts/commands:
 
 Preserve:
 
-- SISAB is slow/flaky: keep long timeouts, retries, backoff, delays, adaptive chunks.
-- Missing municipality rows can mean zero events: retry that case once, then continue.
-- Revalidate cached raw chunks before reuse; malformed cached chunks must be redownloaded.
-- Shared municipality cache defaults to `data/raw/sisab_municipios.json`; keep `--refresh-municipality-cache`.
-- Final CSVs are per competência/UF and must be written atomically.
-- `--output` is valid only for exactly one competência and one UF.
-- Keep raw chunk cache/resume, cache locks, municipality caching, sorted final rows, validation.
-- Repeated single-municipality missing rows are accepted after the one confirmation retry; other repeated failures abort.
+- SISAB is slow/flaky: keep long timeouts, retries, backoff, and delays.
+- Revalidate cached raw Brazil CSVs before reuse; malformed cached CSVs must be redownloaded.
+- Final CSVs are per competência and must be written atomically.
+- Keep raw CSV cache/resume, cache locks, sorted final rows, and validation.
 - Do not add derived columns unless requested.
 - Do not commit generated outputs/caches: `data/`, `data/raw/sisab_saude_*`, `__pycache__/`, `*.pyc`.
 
