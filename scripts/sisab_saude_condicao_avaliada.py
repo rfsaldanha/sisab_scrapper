@@ -21,9 +21,11 @@ if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.sisab_saude_producao import (
+    AGE_GROUPS,
     BASE_URL,
     REPORT_PATH,
     REPORT_URL,
+    SEXES,
     JsForm,
     JsonLogFormatter,
     SisabClient,
@@ -46,6 +48,8 @@ TIDY_FIELDNAMES = [
     "uf",
     "ibge",
     "municipio",
+    "faixa_etaria",
+    "sexo",
     "condicao_avaliada",
     "valor",
 ]
@@ -111,7 +115,12 @@ def open_report(args: argparse.Namespace) -> ReportForm:
         raise
 
 
-def parse_sisab_csv(text: str, competencia: str) -> list[dict[str, object]]:
+def parse_sisab_csv(
+    text: str,
+    competencia: str,
+    faixa_etaria: str = "",
+    sexo: str = "",
+) -> list[dict[str, object]]:
     lines = [line for line in text.splitlines() if line.strip()]
     header_index = next(
         (
@@ -142,6 +151,8 @@ def parse_sisab_csv(text: str, competencia: str) -> list[dict[str, object]]:
                     "uf": uf,
                     "ibge": ibge,
                     "municipio": municipio,
+                    "faixa_etaria": faixa_etaria,
+                    "sexo": sexo,
                     "condicao_avaliada": column.strip(),
                     "valor": parse_br_integer(value),
                 }
@@ -169,6 +180,8 @@ def sort_tidy_rows(rows: Iterable[dict[str, object]]) -> list[dict[str, object]]
             str(row["competencia"]),
             str(row["uf"]),
             str(row["ibge"]),
+            str(row["faixa_etaria"]),
+            str(row["sexo"]),
             str(row["condicao_avaliada"]),
         ),
     )
@@ -192,14 +205,20 @@ def read_or_download_brazil_csv(
     args: argparse.Namespace,
     report: ReportForm,
     competencia: str,
+    faixa_etaria: str,
+    idade_inicio: int,
+    idade_fim: int,
+    tp_idade: str,
+    sexo_label: str,
+    sexo_value: str,
 ) -> list[dict[str, object]]:
-    cache_path = raw_cache_path(args.raw_dir, competencia)
+    cache_path = raw_cache_path(args.raw_dir, competencia, faixa_etaria, sexo_label)
     invalid_cache = False
     if cache_path.exists() and not args.no_resume:
         LOGGER.info("%s: using cached raw CSV %s", competencia, cache_path)
         csv_text = cache_path.read_text(encoding="ISO-8859-1")
         try:
-            rows = parse_sisab_csv(csv_text, competencia)
+            rows = parse_sisab_csv(csv_text, competencia, faixa_etaria, sexo_label)
             validate_rows(rows, competencia)
             return rows
         except SisabError as error:
@@ -214,8 +233,12 @@ def read_or_download_brazil_csv(
                 COLUMN_CONDICAO_AVALIADA,
                 [(CONDICAO_AVALIADA_SELECT_ID, condicao) for condicao in report.condicoes_avaliadas],
                 TP_PRODUCAO_ATENDIMENTO_INDIVIDUAL,
+                idade_inicio,
+                idade_fim,
+                tp_idade,
+                sexo_value,
             )
-            rows = parse_sisab_csv(csv_text, competencia)
+            rows = parse_sisab_csv(csv_text, competencia, faixa_etaria, sexo_label)
             validate_rows(rows, competencia)
             if not args.no_raw_cache:
                 with cache_lock(cache_path, args.lock_timeout):
@@ -236,6 +259,41 @@ def read_or_download_brazil_csv(
                 report = open_report(args)
                 report.client._retry_sleep(attempt)
     raise last_error or SisabError("SISAB CSV failed without an exception.")
+
+
+def read_or_download_stratified_csvs(
+    args: argparse.Namespace,
+    report: ReportForm,
+    competencia: str,
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    total = len(AGE_GROUPS) * len(SEXES)
+    completed = 0
+    for faixa_etaria, idade_inicio, idade_fim, tp_idade in AGE_GROUPS:
+        for sexo_label, sexo_value in SEXES:
+            completed += 1
+            LOGGER.info(
+                "%s: downloading Brazil CSV %d/%d for %s, %s",
+                competencia,
+                completed,
+                total,
+                faixa_etaria,
+                sexo_label,
+            )
+            rows.extend(
+                read_or_download_brazil_csv(
+                    args,
+                    report,
+                    competencia,
+                    faixa_etaria,
+                    idade_inicio,
+                    idade_fim,
+                    tp_idade,
+                    sexo_label,
+                    sexo_value,
+                )
+            )
+    return rows
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -283,8 +341,8 @@ def run_competencia(args: argparse.Namespace, competencia: str) -> list[Path]:
     report = open_report(args)
     try:
         started = time.monotonic()
-        LOGGER.info("%s: downloading Brazil CSV", competencia)
-        rows = read_or_download_brazil_csv(args, report, competencia)
+        LOGGER.info("%s: downloading Brazil CSVs by age group and sex", competencia)
+        rows = read_or_download_stratified_csvs(args, report, competencia)
         LOGGER.info("%s: parsed %d tidy rows in %.1fs", competencia, len(rows), time.monotonic() - started)
     finally:
         report.client.close()

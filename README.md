@@ -11,7 +11,13 @@ All scrapers use the same base configuration:
 - Município: all municipalities
 - Competência: one month or an inclusive month interval
 - Linha: `Municipio`
+- Faixa etária: DataSUS `Faixa etária 2` groups
+- Sexo: `Masculino` and `Feminino`
 - Output: tidy CSV, one final CSV per competência
+
+For each scraper and competência, the final CSV combines 36 SISAB downloads:
+18 age groups x 2 sex values. This keeps the final artifact per competência
+while preserving raw-cache resume for each age/sex stratum.
 
 Available scrapers:
 
@@ -75,19 +81,19 @@ Use `--output-dir` to change the directory for default outputs.
 `sisab-saude-producao`:
 
 ```text
-competencia,uf,ibge,municipio,tipo_producao,valor
+competencia,uf,ibge,municipio,faixa_etaria,sexo,tipo_producao,valor
 ```
 
 `sisab-saude-procedimento`:
 
 ```text
-competencia,uf,ibge,municipio,procedimento,valor
+competencia,uf,ibge,municipio,faixa_etaria,sexo,procedimento,valor
 ```
 
 `sisab-saude-condicao-avaliada`:
 
 ```text
-competencia,uf,ibge,municipio,condicao_avaliada,valor
+competencia,uf,ibge,municipio,faixa_etaria,sexo,condicao_avaliada,valor
 ```
 
 ## Reliability
@@ -100,6 +106,13 @@ Raw all-Brazil SISAB CSVs are cached by scraper under:
 data/raw/sisab_saude_producao
 data/raw/sisab_saude_procedimento
 data/raw/sisab_saude_condicao_avaliada
+```
+
+Within each scraper cache, raw CSVs are separated by competência, age group, and
+sex, for example:
+
+```text
+data/raw/sisab_saude_producao/202604/de_20_a_24_anos/feminino/brasil.csv
 ```
 
 Use `--no-resume` to ignore cached raw CSVs, or `--no-raw-cache` to avoid saving
