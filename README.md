@@ -76,6 +76,52 @@ data/sisab_saude_condicao_avaliada_202604.csv
 
 Use `--output-dir` to change the directory for default outputs.
 
+## Yearly merge
+
+`merge_files.R` joins monthly scraper outputs into yearly CSV and parquet files.
+It expects the stratified monthly schema shown below, including `faixa_etaria`
+and `sexo`.
+
+```bash
+Rscript merge_files.R 2026
+```
+
+By default, it reads:
+
+```text
+data/producao/monthly
+data/procedimento/monthly
+data/condicao_avaliada/monthly
+```
+
+and writes:
+
+```text
+data/producao/yearly/sisab_saude_producao_2026.csv
+data/producao/yearly/sisab_saude_producao_2026.parquet
+data/procedimento/yearly/sisab_saude_procedimento_2026.csv
+data/procedimento/yearly/sisab_saude_procedimento_2026.parquet
+data/condicao_avaliada/yearly/sisab_saude_condicao_avaliada_2026.csv
+data/condicao_avaliada/yearly/sisab_saude_condicao_avaliada_2026.parquet
+```
+
+For each year and scraper, the merge expands the observed municipalities and
+categories across all input competências, all 18 age groups, and both sex
+values. Missing month/municipality/age/sex/category combinations are written
+with `valor = 0`.
+
+Useful options:
+
+```bash
+Rscript merge_files.R --year 2026 --data-dir data
+Rscript merge_files.R 2026 --allow-month-gaps
+```
+
+Without `--allow-month-gaps`, the script stops if there are missing monthly
+files between the first and last competência found for the year. It also
+validates expected age groups, sex values, required columns, and empty category
+values before writing yearly outputs.
+
 ## Schemas
 
 `sisab-saude-producao`:
@@ -144,4 +190,5 @@ python3 scripts/sisab_saude_producao.py --competencia 202604 --json-log
 
 ```bash
 python3 -m unittest discover -s tests
+Rscript -e "testthat::test_file('tests/test_merge_files.R')"
 ```
