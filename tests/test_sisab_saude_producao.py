@@ -10,6 +10,7 @@ from scripts.sisab_saude_producao import (
     expand_competencias,
     parse_sisab_csv,
     parse_br_integer,
+    is_no_data_response,
     raw_cache_path,
     sort_tidy_rows,
     validate_rows,
@@ -50,6 +51,15 @@ class SisabParserTest(unittest.TestCase):
     def test_parse_sisab_csv_rejects_missing_header(self) -> None:
         with self.assertRaises(SisabError):
             parse_sisab_csv("metadata only\nno table here\n", "202604")
+
+    def test_no_data_response_detects_sisab_empty_result_message(self) -> None:
+        html = "<div>Prezado(a), A consulta não retornou nenhum dado com o(s) filtro(s) selecionado(s).</div>"
+
+        escaped_html = "<div>Prezado(a), A consulta n&atilde;o retornou nenhum dado.</div>"
+
+        self.assertTrue(is_no_data_response(html))
+        self.assertTrue(is_no_data_response(escaped_html))
+        self.assertFalse(is_no_data_response("SISAB did not return CSV for another reason."))
 
     def test_validate_rows_accepts_complete_brazil_csv(self) -> None:
         rows = parse_sisab_csv(SISAB_CSV, "202604", "De 20 a 24 anos", "Feminino")

@@ -85,6 +85,18 @@ class SisabError(RuntimeError):
     pass
 
 
+class SisabNoData(SisabError):
+    pass
+
+
+def is_no_data_response(text: str) -> bool:
+    message = "A consulta não retornou nenhum dado"
+    if message in text:
+        return True
+    visible_text = BeautifulSoup(text, "html.parser").get_text(" ")
+    return message in visible_text
+
+
 class JsonLogFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload = {
@@ -219,6 +231,11 @@ class SisabClient:
             if "text/csv" in content_type.lower():
                 response.encoding = response.encoding or "ISO-8859-1"
                 return response.text
+
+            if is_no_data_response(response.text):
+                raise SisabNoData(
+                    f"SISAB returned no data for {competencia} with the selected filters."
+                )
 
             preview = response.text[:500].replace("\n", " ")
             last_error = SisabError(
@@ -511,6 +528,14 @@ def read_or_download_brazil_csv(
                     if invalid_cache or not cache_path.exists():
                         write_text_atomic(cache_path, csv_text, encoding="ISO-8859-1")
             return rows
+        except SisabNoData:
+            LOGGER.info(
+                "%s: no SISAB data for %s, %s; skipping stratum",
+                competencia,
+                faixa_etaria,
+                sexo_label,
+            )
+            return []
         except (requests.RequestException, SisabError) as error:
             last_error = error
             if attempt <= args.retries:

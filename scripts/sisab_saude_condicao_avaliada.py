@@ -30,6 +30,7 @@ from scripts.sisab_saude_producao import (
     JsonLogFormatter,
     SisabClient,
     SisabError,
+    SisabNoData,
     cache_lock,
     expand_competencias,
     parse_br_integer,
@@ -245,6 +246,14 @@ def read_or_download_brazil_csv(
                     if invalid_cache or not cache_path.exists():
                         write_text_atomic(cache_path, csv_text, encoding="ISO-8859-1")
             return rows
+        except SisabNoData:
+            LOGGER.info(
+                "%s: no SISAB data for %s, %s; skipping stratum",
+                competencia,
+                faixa_etaria,
+                sexo_label,
+            )
+            return []
         except (requests.RequestException, SisabError) as error:
             last_error = error
             if attempt <= args.retries:
