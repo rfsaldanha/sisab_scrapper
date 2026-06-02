@@ -2,7 +2,7 @@ library(testthat)
 library(dplyr)
 library(tibble)
 
-merge_candidates <- Filter(file.exists, c("merge_files.R", "../merge_files.R"))
+merge_candidates <- Filter(file.exists, c("../scripts/merge_files.R", "scripts/merge_files.R", "merge_files.R", "../merge_files.R"))
 source(merge_candidates[[1]])
 
 test_that("complete_yearly_data fills missing month age sex category combinations", {
@@ -37,6 +37,45 @@ test_that("complete_yearly_data fills missing month age sex category combination
 
   expect_equal(nrow(missing_combo), 1)
   expect_equal(missing_combo$valor, 0L)
+})
+
+test_that("streaming yearly writer matches completed data", {
+  monthly <- tibble(
+    competencia = c("202601", "202602"),
+    uf = "AC",
+    ibge = "120001",
+    municipio = "ACRELANDIA",
+    faixa_etaria = c("Menor de 1 ano", "De 1 a 4 anos"),
+    sexo = c("Masculino", "Feminino"),
+    procedimento = c("A", "B"),
+    valor = c(5, 7)
+  )
+  competencias <- c("202601", "202602")
+  expected <- complete_yearly_data(monthly, competencias, "procedimento")
+  output_dir <- tempdir()
+  csv_path <- file.path(output_dir, "yearly.csv")
+  parquet_path <- file.path(output_dir, "yearly.parquet")
+
+  write_completed_yearly_atomic(
+    summarise_yearly_data(monthly, "procedimento"),
+    competencias,
+    "procedimento",
+    csv_path,
+    parquet_path
+  )
+
+  from_csv <- readr::read_csv2(
+    csv_path,
+    col_types = readr::cols(
+      .default = readr::col_character(),
+      valor = readr::col_integer()
+    ),
+    show_col_types = FALSE
+  )
+  from_parquet <- arrow::read_parquet(parquet_path)
+
+  expect_identical(as_tibble(from_csv), expected)
+  expect_identical(as_tibble(from_parquet), expected)
 })
 
 test_that("validate_dimensions rejects unexpected age groups and sexes", {
