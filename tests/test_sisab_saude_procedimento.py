@@ -55,7 +55,7 @@ class SisabProcedimentoParserTest(unittest.TestCase):
     def test_default_output_path_is_per_competencia(self) -> None:
         path = default_output_path(Path("out"), "202604")
 
-        self.assertEqual(str(path), "out/sisab_saude_procedimento_202604.csv")
+        self.assertEqual(str(path), "out/sisab_saude_procedimento_202604.csv.zip")
 
 
 if __name__ == "__main__":

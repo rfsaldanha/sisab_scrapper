@@ -1,7 +1,12 @@
+import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 from bs4 import BeautifulSoup
+
+from scripts.csv_zip import existing_csv_path, read_csv_text, write_csv_zip_atomic
+from scripts.zip_csv_files import convert_csv
 
 from scripts.sisab_saude_producao import (
     SisabClient,
@@ -90,16 +95,16 @@ class SisabParserTest(unittest.TestCase):
     def test_default_output_path_is_per_competencia(self) -> None:
         self.assertEqual(
             str(default_output_path(Path("out"), "202604")),
-            "out/sisab_saude_producao_202604.csv",
+            "out/sisab_saude_producao_202604.csv.zip",
         )
 
     def test_raw_cache_path_is_per_competencia_brazil_csv(self) -> None:
-        self.assertEqual(str(raw_cache_path(Path("raw"), "202604")), "raw/202604/brasil.csv")
+        self.assertEqual(str(raw_cache_path(Path("raw"), "202604")), "raw/202604/brasil.csv.zip")
 
     def test_raw_cache_path_can_include_age_group_and_sex(self) -> None:
         self.assertEqual(
             str(raw_cache_path(Path("raw"), "202604", "De 20 a 24 anos", "Feminino")),
-            "raw/202604/de_20_a_24_anos/feminino/brasil.csv",
+            "raw/202604/de_20_a_24_anos/feminino/brasil.csv.zip",
         )
 
     def test_csv_button_name_is_parsed_from_dynamic_jsf_link(self) -> None:
@@ -123,6 +128,66 @@ class SisabParserTest(unittest.TestCase):
     def test_expand_competencias_rejects_reverse_range(self) -> None:
         with self.assertRaises(Exception):
             expand_competencias(["202604", "202601"])
+
+
+class CsvZipStorageTest(unittest.TestCase):
+    def test_zip_writer_stores_single_csv_member(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.csv.zip"
+
+            write_csv_zip_atomic(path, "a,b\n1,2\n")
+
+            with zipfile.ZipFile(path) as archive:
+                self.assertEqual(archive.namelist(), ["sample.csv"])
+            self.assertEqual(read_csv_text(path), "a,b\n1,2\n")
+
+    def test_existing_csv_path_prefers_zip_and_falls_back_to_plain_csv(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            legacy = root / "sample.csv"
+            zipped = root / "sample.csv.zip"
+            legacy.write_text("legacy\n", encoding="utf-8")
+
+            self.assertEqual(existing_csv_path(zipped), legacy)
+
+            write_csv_zip_atomic(zipped, "zipped\n")
+            self.assertEqual(existing_csv_path(zipped), zipped)
+
+    def test_migration_converts_csv_after_zip_verification(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.csv"
+            path.write_text("a,b\n1,2\n", encoding="utf-8")
+
+            converted = convert_csv(path)
+
+            self.assertTrue(converted)
+            self.assertFalse(path.exists())
+            self.assertEqual(read_csv_text(Path(directory) / "sample.csv.zip"), "a,b\n1,2\n")
+
+    def test_migration_overwrites_existing_zip(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "sample.csv"
+            zipped = root / "sample.csv.zip"
+            path.write_text("fresh\n", encoding="utf-8")
+            write_csv_zip_atomic(zipped, "stale\n")
+
+            converted = convert_csv(path)
+
+            self.assertTrue(converted)
+            self.assertFalse(path.exists())
+            self.assertEqual(read_csv_text(zipped), "fresh\n")
+
+    def test_migration_dry_run_does_not_change_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.csv"
+            path.write_text("a,b\n1,2\n", encoding="utf-8")
+
+            converted = convert_csv(path, dry_run=True)
+
+            self.assertTrue(converted)
+            self.assertTrue(path.exists())
+            self.assertFalse((Path(directory) / "sample.csv.zip").exists())
 
 
 if __name__ == "__main__":

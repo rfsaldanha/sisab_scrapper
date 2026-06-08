@@ -53,7 +53,7 @@ test_that("streaming yearly writer matches completed data", {
   competencias <- c("202601", "202602")
   expected <- complete_yearly_data(monthly, competencias, "procedimento")
   output_dir <- tempdir()
-  csv_path <- file.path(output_dir, "yearly.csv")
+  csv_path <- file.path(output_dir, "yearly.csv.zip")
   parquet_path <- file.path(output_dir, "yearly.parquet")
 
   write_completed_yearly_atomic(
@@ -64,19 +64,44 @@ test_that("streaming yearly writer matches completed data", {
     parquet_path
   )
 
+  csv_connection <- unz(csv_path, "yearly.csv", open = "rb")
   from_csv <- readr::read_csv2(
-    csv_path,
+    csv_connection,
     col_types = readr::cols(
       .default = readr::col_character(),
       valor = readr::col_integer()
     ),
     show_col_types = FALSE
   )
+  close(csv_connection)
   from_parquet <- arrow::read_parquet(parquet_path)
 
   expect_identical(as_tibble(from_csv), expected)
   expect_identical(as_tibble(from_parquet), expected)
 })
+
+test_that("read_monthly_files reads zipped monthly CSV files", {
+  monthly <- tibble(
+    competencia = "202601",
+    uf = "AC",
+    ibge = "120001",
+    municipio = "ACRELANDIA",
+    faixa_etaria = "Menor de 1 ano",
+    sexo = "Masculino",
+    procedimento = "Teste",
+    valor = 5
+  )
+  csv_path <- file.path(tempdir(), "sisab_saude_procedimento_202601.csv.zip")
+  plain_path <- file.path(tempdir(), "sisab_saude_procedimento_202601.csv")
+
+  readr::write_csv(monthly, plain_path)
+  zip_csv_file_atomic(plain_path, csv_path)
+  file_delete(plain_path)
+  from_zip <- read_monthly_files(csv_path, "procedimento")
+
+  expect_equal(as_tibble(from_zip), monthly)
+})
+
 
 test_that("validate_dimensions rejects unexpected age groups and sexes", {
   monthly <- tibble(
@@ -98,7 +123,7 @@ test_that("validate_dimensions rejects unexpected age groups and sexes", {
 
 test_that("validate_months detects gaps between first and last monthly files", {
   files <- c(
-    "data/procedimento/monthly/sisab_saude_procedimento_202601.csv",
+    "data/procedimento/monthly/sisab_saude_procedimento_202601.csv.zip",
     "data/procedimento/monthly/sisab_saude_procedimento_202603.csv"
   )
 
@@ -110,7 +135,26 @@ test_that("monthly file patterns are specific to one scraper and year", {
   pattern <- monthly_file_pattern("sisab_saude_producao", "2026")
 
   expect_true(grepl(pattern, "sisab_saude_producao_202601.csv"))
+  expect_true(grepl(pattern, "sisab_saude_producao_202601.csv.zip"))
   expect_false(grepl(pattern, "sisab_saude_producao_202601.csv.bak"))
   expect_false(grepl(pattern, "sisab_saude_procedimento_202601.csv"))
   expect_false(grepl(pattern, "sisab_saude_producao_202501.csv"))
+})
+
+test_that("monthly file selection prefers zipped duplicate competencia files", {
+  files <- c(
+    "data/producao/monthly/sisab_saude_producao_202601.csv",
+    "data/producao/monthly/sisab_saude_producao_202601.csv.zip",
+    "data/producao/monthly/sisab_saude_producao_202602.csv"
+  )
+
+  selected <- prefer_zipped_monthly_files(files)
+
+  expect_equal(
+    selected,
+    c(
+      "data/producao/monthly/sisab_saude_producao_202601.csv.zip",
+      "data/producao/monthly/sisab_saude_producao_202602.csv"
+    )
+  )
 })

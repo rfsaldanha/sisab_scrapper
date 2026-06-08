@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import csv
+import io
 import json
 import logging
 import os
@@ -20,6 +21,11 @@ from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
+
+if __package__ is None or __package__ == "":
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.csv_zip import existing_csv_path, read_csv_text, write_csv_zip_atomic
 
 
 BASE_URL = "https://sisab.saude.gov.br"
@@ -367,21 +373,15 @@ def parse_br_integer(value: str | None) -> int:
 
 
 def write_tidy_csv(path: Path, rows: Iterable[dict[str, object]]) -> None:
-    # Atomic replace prevents a partial final CSV if the process dies mid-write.
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_name(f".{path.name}.tmp")
-    with temp_path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=TIDY_FIELDNAMES)
-        writer.writeheader()
-        writer.writerows(rows)
-    os.replace(temp_path, path)
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(output, fieldnames=TIDY_FIELDNAMES)
+    writer.writeheader()
+    writer.writerows(rows)
+    write_csv_zip_atomic(path, output.getvalue(), encoding="utf-8")
 
 
 def write_text_atomic(path: Path, text: str, encoding: str = "ISO-8859-1") -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_name(f".{path.name}.tmp")
-    temp_path.write_text(text, encoding=encoding)
-    os.replace(temp_path, path)
+    write_csv_zip_atomic(path, text, encoding=encoding)
 
 
 def sort_tidy_rows(rows: Iterable[dict[str, object]]) -> list[dict[str, object]]:
@@ -426,10 +426,10 @@ def raw_cache_path(
     sexo: str | None = None,
 ) -> Path:
     if faixa_etaria is None and sexo is None:
-        return cache_dir / competencia / "brasil.csv"
+        return cache_dir / competencia / "brasil.csv.zip"
     if faixa_etaria is None or sexo is None:
         raise ValueError("faixa_etaria and sexo must be provided together for stratified cache paths.")
-    return cache_dir / competencia / slugify_dimension(faixa_etaria) / slugify_dimension(sexo) / "brasil.csv"
+    return cache_dir / competencia / slugify_dimension(faixa_etaria) / slugify_dimension(sexo) / "brasil.csv.zip"
 
 
 @contextlib.contextmanager
@@ -497,14 +497,15 @@ def read_or_download_brazil_csv(
 ) -> list[dict[str, object]]:
     cache_path = raw_cache_path(args.raw_dir, competencia, faixa_etaria, sexo_label)
     invalid_cache = False
-    if cache_path.exists() and not args.no_resume:
-        LOGGER.info("%s: using cached raw CSV %s", competencia, cache_path)
-        csv_text = cache_path.read_text(encoding="ISO-8859-1")
+    cached_path = None if args.no_resume else existing_csv_path(cache_path)
+    if cached_path is not None:
+        LOGGER.info("%s: using cached raw CSV %s", competencia, cached_path)
         try:
+            csv_text = read_csv_text(cached_path, encoding="ISO-8859-1")
             rows = parse_sisab_csv(csv_text, competencia, faixa_etaria, sexo_label)
             validate_rows(rows, competencia)
             return rows
-        except SisabError as error:
+        except (OSError, ValueError, SisabError) as error:
             invalid_cache = True
             LOGGER.warning("%s: cached raw CSV failed validation; redownloading: %s", competencia, error)
 
@@ -643,7 +644,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-dir",
         type=Path,
         default=Path("data"),
-        help="Directory for default output CSVs. Default: data.",
+        help="Directory for default output CSV ZIPs. Default: data.",
     )
     parser.add_argument(
         "--delay",
@@ -679,17 +680,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--raw-dir",
         type=Path,
         default=Path("data/raw/sisab_saude_producao"),
-        help="Directory for raw SISAB Brazil CSV cache. Default: data/raw/sisab_saude_producao.",
+        help="Directory for raw SISAB Brazil CSV ZIP cache. Default: data/raw/sisab_saude_producao.",
     )
     parser.add_argument(
         "--no-resume",
         action="store_true",
-        help="Ignore cached raw CSVs and download everything again.",
+        help="Ignore cached raw CSV ZIPs and legacy CSVs and download everything again.",
     )
     parser.add_argument(
         "--no-raw-cache",
         action="store_true",
-        help="Do not save downloaded raw SISAB CSVs.",
+        help="Do not save downloaded raw SISAB CSV ZIPs.",
     )
     parser.add_argument(
         "--log-level",
@@ -726,7 +727,7 @@ def configure_logging(level: str, json_log: bool = False) -> None:
 
 
 def default_output_path(output_dir: Path, competencia: str) -> Path:
-    return output_dir / f"sisab_saude_producao_{competencia}.csv"
+    return output_dir / f"sisab_saude_producao_{competencia}.csv.zip"
 
 
 def run_competencia(args: argparse.Namespace, competencia: str) -> list[Path]:

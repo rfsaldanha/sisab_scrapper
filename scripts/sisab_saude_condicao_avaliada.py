@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 import logging
-import os
 import sys
 import time
 from dataclasses import dataclass
@@ -19,6 +19,8 @@ from bs4 import BeautifulSoup
 
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.csv_zip import existing_csv_path, read_csv_text, write_csv_zip_atomic
 
 from scripts.sisab_saude_producao import (
     AGE_GROUPS,
@@ -189,17 +191,15 @@ def sort_tidy_rows(rows: Iterable[dict[str, object]]) -> list[dict[str, object]]
 
 
 def write_tidy_csv(path: Path, rows: Iterable[dict[str, object]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_name(f".{path.name}.tmp")
-    with temp_path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=TIDY_FIELDNAMES)
-        writer.writeheader()
-        writer.writerows(rows)
-    os.replace(temp_path, path)
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(output, fieldnames=TIDY_FIELDNAMES)
+    writer.writeheader()
+    writer.writerows(rows)
+    write_csv_zip_atomic(path, output.getvalue(), encoding="utf-8")
 
 
 def default_output_path(output_dir: Path, competencia: str) -> Path:
-    return output_dir / f"sisab_saude_condicao_avaliada_{competencia}.csv"
+    return output_dir / f"sisab_saude_condicao_avaliada_{competencia}.csv.zip"
 
 
 def read_or_download_brazil_csv(
@@ -215,14 +215,15 @@ def read_or_download_brazil_csv(
 ) -> list[dict[str, object]]:
     cache_path = raw_cache_path(args.raw_dir, competencia, faixa_etaria, sexo_label)
     invalid_cache = False
-    if cache_path.exists() and not args.no_resume:
-        LOGGER.info("%s: using cached raw CSV %s", competencia, cache_path)
-        csv_text = cache_path.read_text(encoding="ISO-8859-1")
+    cached_path = None if args.no_resume else existing_csv_path(cache_path)
+    if cached_path is not None:
+        LOGGER.info("%s: using cached raw CSV %s", competencia, cached_path)
         try:
+            csv_text = read_csv_text(cached_path, encoding="ISO-8859-1")
             rows = parse_sisab_csv(csv_text, competencia, faixa_etaria, sexo_label)
             validate_rows(rows, competencia)
             return rows
-        except SisabError as error:
+        except (OSError, ValueError, SisabError) as error:
             invalid_cache = True
             LOGGER.warning("%s: cached raw CSV failed validation; redownloading: %s", competencia, error)
 

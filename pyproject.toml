@@ -16,6 +16,7 @@ dependencies = [
 sisab-saude-producao = "scripts.sisab_saude_producao:main"
 sisab-saude-procedimento = "scripts.sisab_saude_procedimento:main"
 sisab-saude-condicao-avaliada = "scripts.sisab_saude_condicao_avaliada:main"
+sisab-zip-csv-files = "scripts.zip_csv_files:main"
 
 [tool.setuptools.packages.find]
 include = ["scripts*"]

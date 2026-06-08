@@ -84,7 +84,25 @@ parse_args <- function(args = commandArgs(trailingOnly = TRUE)) {
 }
 
 monthly_file_pattern <- function(file_prefix, year) {
-  glue("^{file_prefix}_{year}[0-9]{{2}}\\.csv$")
+  glue("^{file_prefix}_{year}[0-9]{{2}}\\.csv(\\.zip)?$")
+}
+
+prefer_zipped_monthly_files <- function(files) {
+  if (length(files) == 0) {
+    return(files)
+  }
+
+  keys <- extract_competencias(files)
+  selected <- vapply(keys, function(competencia) {
+    candidates <- files[grepl(competencia, path_file(files), fixed = TRUE)]
+    zipped <- candidates[grepl("\\.csv\\.zip$", path_file(candidates))]
+    if (length(zipped) > 0) {
+      return(sort(zipped)[[1]])
+    }
+    sort(candidates)[[1]]
+  }, character(1))
+
+  sort(unname(selected))
 }
 
 list_monthly_files <- function(data_dir, folder, file_prefix, year) {
@@ -95,7 +113,7 @@ list_monthly_files <- function(data_dir, folder, file_prefix, year) {
 
   files <- dir_ls(path = monthly_dir, type = "file")
   files[grepl(monthly_file_pattern(file_prefix, year), path_file(files))] |>
-    sort()
+    prefer_zipped_monthly_files()
 }
 
 extract_competencias <- function(files) {
@@ -168,6 +186,40 @@ validate_dimensions <- function(data, category_col) {
   invisible(data)
 }
 
+zip_csv_member <- function(zip_path, expected = NULL) {
+  listing <- unzip(zip_path, list = TRUE)
+  members <- listing$Name[!grepl("/$", listing$Name)]
+  if (is.null(expected)) {
+    expected <- sub("\\.zip$", "", path_file(zip_path))
+  }
+  if (!identical(members, expected)) {
+    stop(
+      glue("Expected ZIP {zip_path} to contain only {expected}."),
+      call. = FALSE
+    )
+  }
+  expected
+}
+
+read_one_monthly_file <- function(file, col_types) {
+  if (grepl("\\.csv\\.zip$", path_file(file))) {
+    member <- zip_csv_member(file)
+    connection <- unz(file, member, open = "rb")
+    on.exit(close(connection), add = TRUE)
+    return(read_csv(
+      file = connection,
+      col_types = col_types,
+      show_col_types = FALSE
+    ))
+  }
+
+  read_csv(
+    file = file,
+    col_types = col_types,
+    show_col_types = FALSE
+  )
+}
+
 read_monthly_files <- function(files, category_col) {
   required_cols <- c(
     "competencia",
@@ -184,20 +236,18 @@ read_monthly_files <- function(files, category_col) {
     stop("No monthly files found.", call. = FALSE)
   }
 
-  data <- read_csv(
-    file = files,
-    col_types = cols(
-      .default = col_character(),
-      competencia = col_character(),
-      uf = col_character(),
-      ibge = col_character(),
-      municipio = col_character(),
-      faixa_etaria = col_character(),
-      sexo = col_character(),
-      valor = col_double()
-    ),
-    show_col_types = FALSE
+  monthly_col_types <- cols(
+    .default = col_character(),
+    competencia = col_character(),
+    uf = col_character(),
+    ibge = col_character(),
+    municipio = col_character(),
+    faixa_etaria = col_character(),
+    sexo = col_character(),
+    valor = col_double()
   )
+  data <- lapply(files, read_one_monthly_file, col_types = monthly_col_types) |>
+    bind_rows()
 
   missing_cols <- setdiff(required_cols, names(data))
   if (length(missing_cols) > 0) {
@@ -350,6 +400,31 @@ make_yearly_chunk <- function(
     )
 }
 
+zip_csv_file_atomic <- function(csv_file, zip_path) {
+  dir_create(path_dir(zip_path))
+  temp_zip <- path_abs(path(path_dir(zip_path), glue(".{path_file(zip_path)}.tmp")))
+  temp_dir <- tempfile("sisab_csv_zip_")
+  dir_create(temp_dir)
+  on.exit(dir_delete(temp_dir), add = TRUE)
+
+  member_name <- sub("\\.zip$", "", path_file(zip_path))
+  member_file <- path(temp_dir, member_name)
+  file_copy(csv_file, member_file, overwrite = TRUE)
+
+  old_wd <- setwd(temp_dir)
+  on.exit(setwd(old_wd), add = TRUE)
+  zip_status <- utils::zip(zipfile = temp_zip, files = member_name, flags = "-q")
+  setwd(old_wd)
+  if (!identical(zip_status, 0L)) {
+    stop(glue("Could not create ZIP archive {temp_zip}."), call. = FALSE)
+  }
+  zip_csv_member(temp_zip, member_name)
+
+  if (!file.rename(temp_zip, zip_path)) {
+    stop(glue("Could not move {temp_zip} to {zip_path}."), call. = FALSE)
+  }
+}
+
 write_completed_yearly_atomic <- function(
   aggregated,
   competencias,
@@ -372,7 +447,7 @@ write_completed_yearly_atomic <- function(
 
   dir_create(path_dir(csv_path))
   dir_create(path_dir(parquet_path))
-  temp_csv <- path(path_dir(csv_path), glue(".{path_file(csv_path)}.tmp"))
+  temp_csv <- path(path_dir(csv_path), glue(".{path_file(csv_path)}.csv.tmp"))
   temp_parquet <- path(path_dir(parquet_path), glue(".{path_file(parquet_path)}.tmp"))
 
   if (file_exists(temp_csv)) {
@@ -417,9 +492,8 @@ write_completed_yearly_atomic <- function(
   writer$Close()
   sink$close()
 
-  if (!file.rename(temp_csv, csv_path)) {
-    stop(glue("Could not move {temp_csv} to {csv_path}."), call. = FALSE)
-  }
+  zip_csv_file_atomic(temp_csv, csv_path)
+  file_delete(temp_csv)
   if (!file.rename(temp_parquet, parquet_path)) {
     stop(glue("Could not move {temp_parquet} to {parquet_path}."), call. = FALSE)
   }
@@ -427,11 +501,20 @@ write_completed_yearly_atomic <- function(
 
 write_csv2_atomic <- function(x, file) {
   dir_create(path_dir(file))
+  if (grepl("\\.csv\\.zip$", path_file(file))) {
+    temp_file <- path(path_dir(file), glue(".{path_file(file)}.csv.tmp"))
+    write_csv2(x = x, file = temp_file)
+    zip_csv_file_atomic(temp_file, file)
+    file_delete(temp_file)
+    return(invisible(file))
+  }
+
   temp_file <- path(path_dir(file), glue(".{path_file(file)}.tmp"))
   write_csv2(x = x, file = temp_file)
   if (!file.rename(temp_file, file)) {
     stop(glue("Could not move {temp_file} to {file}."), call. = FALSE)
   }
+  invisible(file)
 }
 
 write_parquet_atomic <- function(x, file) {
@@ -467,7 +550,7 @@ merge_dataset <- function(
   message(glue("[{file_prefix}] Reading and summarising {length(files)} monthly file(s)..."))
   aggregated <- read_and_summarise_monthly_files(files, category_col)
 
-  csv_path <- path(dataset_dir, "yearly", glue("{file_prefix}_{year}.csv"))
+  csv_path <- path(dataset_dir, "yearly", glue("{file_prefix}_{year}.csv.zip"))
   parquet_path <- path(
     dataset_dir,
     "yearly",

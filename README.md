@@ -13,9 +13,9 @@ All scrapers use the same base configuration:
 - Linha: `Municipio`
 - Faixa etária: DataSUS `Faixa etária 2` groups
 - Sexo: `Masculino` and `Feminino`
-- Output: tidy CSV, one final CSV per competência
+- Output: tidy CSV, one final CSV ZIP per competência
 
-For each scraper and competência, the final CSV combines 36 SISAB downloads:
+For each scraper and competência, the final CSV ZIP combines 36 SISAB downloads:
 18 age groups x 2 sex values. This keeps the final artifact per competência
 while preserving raw-cache resume for each age/sex stratum.
 
@@ -60,7 +60,7 @@ sisab-saude-procedimento --competencia 202604
 sisab-saude-condicao-avaliada --competencia 202604
 ```
 
-Pass an inclusive competência interval to write one separate CSV per month:
+Pass an inclusive competência interval to write one separate CSV ZIP per month:
 
 ```bash
 python3 scripts/sisab_saude_producao.py --competencia 202601 202604
@@ -69,16 +69,16 @@ python3 scripts/sisab_saude_producao.py --competencia 202601 202604
 Default output paths include the scraper name and competência:
 
 ```text
-data/sisab_saude_producao_202604.csv
-data/sisab_saude_procedimento_202604.csv
-data/sisab_saude_condicao_avaliada_202604.csv
+data/sisab_saude_producao_202604.csv.zip
+data/sisab_saude_procedimento_202604.csv.zip
+data/sisab_saude_condicao_avaliada_202604.csv.zip
 ```
 
 Use `--output-dir` to change the directory for default outputs.
 
 ## Yearly merge
 
-`merge_files.R` joins monthly scraper outputs into yearly CSV and parquet files.
+`merge_files.R` joins monthly scraper outputs into yearly CSV ZIP and parquet files.
 It expects the stratified monthly schema shown below, including `faixa_etaria`
 and `sexo`.
 
@@ -97,11 +97,11 @@ data/condicao_avaliada/monthly
 and writes:
 
 ```text
-data/producao/yearly/sisab_saude_producao_2026.csv
+data/producao/yearly/sisab_saude_producao_2026.csv.zip
 data/producao/yearly/sisab_saude_producao_2026.parquet
-data/procedimento/yearly/sisab_saude_procedimento_2026.csv
+data/procedimento/yearly/sisab_saude_procedimento_2026.csv.zip
 data/procedimento/yearly/sisab_saude_procedimento_2026.parquet
-data/condicao_avaliada/yearly/sisab_saude_condicao_avaliada_2026.csv
+data/condicao_avaliada/yearly/sisab_saude_condicao_avaliada_2026.csv.zip
 data/condicao_avaliada/yearly/sisab_saude_condicao_avaliada_2026.parquet
 ```
 
@@ -144,9 +144,9 @@ competencia,uf,ibge,municipio,faixa_etaria,sexo,condicao_avaliada,valor
 
 ## Reliability
 
-Each final CSV is written atomically after its competência run succeeds.
+Each final CSV ZIP is written atomically after its competência run succeeds.
 
-Raw all-Brazil SISAB CSVs are cached by scraper under:
+Raw all-Brazil SISAB CSV ZIPs are cached by scraper under:
 
 ```text
 data/raw/sisab_saude_producao
@@ -154,16 +154,27 @@ data/raw/sisab_saude_procedimento
 data/raw/sisab_saude_condicao_avaliada
 ```
 
-Within each scraper cache, raw CSVs are separated by competência, age group, and
+Within each scraper cache, raw CSV ZIPs are separated by competência, age group, and
 sex, for example:
 
 ```text
-data/raw/sisab_saude_producao/202604/de_20_a_24_anos/feminino/brasil.csv
+data/raw/sisab_saude_producao/202604/de_20_a_24_anos/feminino/brasil.csv.zip
 ```
 
-Use `--no-resume` to ignore cached raw CSVs, or `--no-raw-cache` to avoid saving
+Use `--no-resume` to ignore cached raw CSV ZIPs and legacy CSVs, or `--no-raw-cache` to avoid saving
 them. Raw cache writes use lock files so concurrent runs do not write the same
-CSV at once.
+CSV ZIP at once.
+
+New runs write `.csv.zip` archives containing one CSV member with the original
+`.csv` filename. Readers still accept legacy plain `.csv` files, preferring the
+ZIP file when both exist.
+
+Convert existing CSVs after a run with the command below. Existing `.csv.zip` files are rebuilt and overwritten from their matching plain `.csv` files:
+
+```bash
+sisab-zip-csv-files data
+sisab-zip-csv-files --dry-run data
+```
 
 SISAB is slow and intermittently unreliable. Defaults are conservative:
 
@@ -177,8 +188,8 @@ python3 scripts/sisab_saude_producao.py --competencia 202604 --delay 5 --timeout
 ```
 
 Each scraper validates that the requested competência exists on SISAB and writes
-sorted final rows. Cached raw CSVs are revalidated before reuse; invalid cached
-CSVs are redownloaded.
+sorted final rows. Cached raw CSV ZIPs and legacy CSVs are revalidated before reuse; invalid
+caches are redownloaded.
 
 Use JSON-lines progress logs when running from automation:
 
