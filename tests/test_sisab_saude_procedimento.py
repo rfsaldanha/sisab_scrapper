@@ -2,6 +2,7 @@ import unittest
 from pathlib import Path
 
 from scripts.sisab_saude_procedimento import (
+    build_parser,
     default_output_path,
     parse_sisab_csv,
     sort_tidy_rows,
@@ -56,6 +57,11 @@ class SisabProcedimentoParserTest(unittest.TestCase):
         path = default_output_path(Path("out"), "202604")
 
         self.assertEqual(str(path), "out/sisab_saude_procedimento_202604.csv.zip")
+
+    def test_default_output_dir_is_monthly_folder(self) -> None:
+        args = build_parser().parse_args(["--competencia", "202604"])
+
+        self.assertEqual(args.output_dir, Path("data/procedimento/monthly"))
 
 
 if __name__ == "__main__":

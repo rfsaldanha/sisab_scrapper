@@ -643,8 +643,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("data"),
-        help="Directory for default output CSV ZIPs. Default: data.",
+        default=Path("data/producao/monthly"),
+        help="Directory for default output CSV ZIPs. Default: data/producao/monthly.",
     )
     parser.add_argument(
         "--delay",

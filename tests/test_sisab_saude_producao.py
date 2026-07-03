@@ -9,6 +9,7 @@ from scripts.csv_zip import existing_csv_path, read_csv_text, write_csv_zip_atom
 from scripts.zip_csv_files import convert_csv
 
 from scripts.sisab_saude_producao import (
+    build_parser,
     SisabClient,
     SisabError,
     default_output_path,
@@ -97,6 +98,11 @@ class SisabParserTest(unittest.TestCase):
             str(default_output_path(Path("out"), "202604")),
             "out/sisab_saude_producao_202604.csv.zip",
         )
+
+    def test_default_output_dir_is_monthly_folder(self) -> None:
+        args = build_parser().parse_args(["--competencia", "202604"])
+
+        self.assertEqual(args.output_dir, Path("data/producao/monthly"))
 
     def test_raw_cache_path_is_per_competencia_brazil_csv(self) -> None:
         self.assertEqual(str(raw_cache_path(Path("raw"), "202604")), "raw/202604/brasil.csv.zip")

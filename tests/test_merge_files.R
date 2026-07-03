@@ -158,3 +158,36 @@ test_that("monthly file selection prefers zipped duplicate competencia files", {
     )
   )
 })
+
+test_that("list_monthly_files includes legacy files in data root", {
+  data_dir <- tempfile("sisab_merge_")
+  dir_create(path(data_dir, "producao", "monthly"))
+  on.exit(dir_delete(data_dir), add = TRUE)
+
+  monthly_file <- path(data_dir, "producao", "monthly", "sisab_saude_producao_202604.csv.zip")
+  legacy_file <- path(data_dir, "sisab_saude_producao_202605.csv.zip")
+  file_create(monthly_file)
+  file_create(legacy_file)
+
+  selected <- list_monthly_files(data_dir, "producao", "sisab_saude_producao", "2026")
+
+  expect_equal(path_file(selected), c(
+    "sisab_saude_producao_202604.csv.zip",
+    "sisab_saude_producao_202605.csv.zip"
+  ))
+})
+
+test_that("list_monthly_files prefers monthly directory duplicates over legacy root files", {
+  data_dir <- tempfile("sisab_merge_")
+  dir_create(path(data_dir, "producao", "monthly"))
+  on.exit(dir_delete(data_dir), add = TRUE)
+
+  monthly_file <- path(data_dir, "producao", "monthly", "sisab_saude_producao_202605.csv.zip")
+  legacy_file <- path(data_dir, "sisab_saude_producao_202605.csv.zip")
+  file_create(monthly_file)
+  file_create(legacy_file)
+
+  selected <- list_monthly_files(data_dir, "producao", "sisab_saude_producao", "2026")
+
+  expect_equal(as.character(selected), as.character(monthly_file))
+})

@@ -69,9 +69,9 @@ python3 scripts/sisab_saude_producao.py --competencia 202601 202604
 Default output paths include the scraper name and competência:
 
 ```text
-data/sisab_saude_producao_202604.csv.zip
-data/sisab_saude_procedimento_202604.csv.zip
-data/sisab_saude_condicao_avaliada_202604.csv.zip
+data/producao/monthly/sisab_saude_producao_202604.csv.zip
+data/procedimento/monthly/sisab_saude_procedimento_202604.csv.zip
+data/condicao_avaliada/monthly/sisab_saude_condicao_avaliada_202604.csv.zip
 ```
 
 Use `--output-dir` to change the directory for default outputs.
@@ -83,7 +83,7 @@ It expects the stratified monthly schema shown below, including `faixa_etaria`
 and `sexo`.
 
 ```bash
-Rscript merge_files.R 2026
+Rscript scripts/merge_files.R 2026
 ```
 
 By default, it reads:
@@ -113,8 +113,8 @@ with `valor = 0`.
 Useful options:
 
 ```bash
-Rscript merge_files.R --year 2026 --data-dir data
-Rscript merge_files.R 2026 --allow-month-gaps
+Rscript scripts/merge_files.R --year 2026 --data-dir data
+Rscript scripts/merge_files.R 2026 --allow-month-gaps
 ```
 
 Without `--allow-month-gaps`, the script stops if there are missing monthly

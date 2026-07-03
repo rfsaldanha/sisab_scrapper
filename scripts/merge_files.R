@@ -107,11 +107,20 @@ prefer_zipped_monthly_files <- function(files) {
 
 list_monthly_files <- function(data_dir, folder, file_prefix, year) {
   monthly_dir <- path(data_dir, folder, "monthly")
-  if (!dir_exists(monthly_dir)) {
-    stop(glue("Monthly directory does not exist: {monthly_dir}"), call. = FALSE)
+  if (dir_exists(monthly_dir)) {
+    files <- dir_ls(path = monthly_dir, type = "file")
+  } else {
+    files <- character()
   }
 
-  files <- dir_ls(path = monthly_dir, type = "file")
+  if (dir_exists(data_dir)) {
+    legacy_files <- dir_ls(path = data_dir, type = "file")
+    files <- c(files, legacy_files)
+  }
+
+  if (length(files) == 0 && !dir_exists(monthly_dir)) {
+    stop(glue("Monthly directory does not exist: {monthly_dir}"), call. = FALSE)
+  }
   files[grepl(monthly_file_pattern(file_prefix, year), path_file(files))] |>
     prefer_zipped_monthly_files()
 }

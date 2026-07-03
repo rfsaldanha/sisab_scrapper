@@ -319,7 +319,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="YYYYMM",
         help="One competencia or start/end pair, e.g. 202604 or 202601 202604.",
     )
-    parser.add_argument("--output-dir", type=Path, default=Path("data"))
+    parser.add_argument("--output-dir", type=Path, default=Path("data/procedimento/monthly"))
     parser.add_argument("--delay", type=float, default=2.0)
     parser.add_argument("--timeout", type=float, default=900.0)
     parser.add_argument("--retries", type=int, default=10)
